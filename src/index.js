@@ -30,7 +30,9 @@ const client = new Client({
   ],
 });
 
-initPlayDlAuth();
+initPlayDlAuth().catch(err => {
+  log.warn('play-dl-auth', `Initialization finished with warning: ${err.message}`);
+});
 
 // ── Load commands ────────────────────────────────────────────────────────────
 client.commands = new Collection();
