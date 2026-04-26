@@ -173,6 +173,7 @@ Backward compatibility:
 - **Resolver backend:** `play-dl` (`src/resolver.js`)
 - **Stream backend:** `play-dl` stream source (`src/GuildQueue.js`)
 - **Voice output:** `@discordjs/voice`
+- **Rate-limit fallback:** when YouTube returns `429` on cloud hosts, playback automatically retries via SoundCloud search for the same track query
 
 ---
 

@@ -90,7 +90,9 @@ module.exports = {
     const wasIdle = !queue.isPlaying() && !queue.isPaused();
 
     if (wasIdle) {
-      queue.playNext();
+      queue.playNext().catch(err => {
+        log.error('play', 'Failed to start playback:', err.message);
+      });
       if (tracks.length === 1) {
         await interaction.editReply(`🎵 Starting **${tracks[0].title}**`);
       } else {
