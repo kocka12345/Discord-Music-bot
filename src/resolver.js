@@ -151,21 +151,20 @@ async function resolve(input, requestedBy) {
         return resolveUrl(trimmed, requestedBy);
     }
 
-    log.info('resolver', 'Searching via play-dl (SoundCloud first):', trimmed);
+    log.info('resolver', 'Searching via play-dl (YouTube first):', trimmed);
 
     let found = null;
 
-    // Prefer SoundCloud on cloud hosts to avoid frequent YouTube 429 limits.
-    const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
+    const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 })
         .catch(() => []);
-    if (scResults.length) {
-        found = scResults[0];
-        log.info('resolver', 'Selected SoundCloud result:', found.url);
-    } else {
-        const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 });
-        if (!ytResults.length) throw new Error('No results found for: ' + trimmed);
+    if (ytResults.length) {
         found = ytResults[0];
         log.info('resolver', 'Selected YouTube result:', found.url);
+    } else {
+        const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 });
+        if (!scResults.length) throw new Error('No results found for: ' + trimmed);
+        found = scResults[0];
+        log.info('resolver', 'Selected SoundCloud result:', found.url);
     }
 
     return [normalizeSearchTrack(found, requestedBy)];
