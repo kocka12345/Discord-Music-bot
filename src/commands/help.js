@@ -40,14 +40,13 @@ module.exports = {
         {
           name: '🎧 Playlists',
           value: [
-            '`/playlist create <name> [public]` — Create a playlist',
+            '`/playlist create <name>` — Create a playlist',
             '`/playlist add <name> <url>` — Add a track',
             '`/playlist remove <name> <pos>` — Remove a track',
             '`/playlist list [name]` — List playlists or tracks',
             '`/playlist play <name>` — Queue a playlist',
             '`/playlist delete <name>` — Delete a playlist',
             '`/playlist rename <name> <newname>` — Rename',
-            '`/playlist settings <name>` — Edit name, visibility & more',
           ].join('\n'),
         },
         {
