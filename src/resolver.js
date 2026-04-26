@@ -79,6 +79,42 @@ function parseYouTubeListId(url) {
     }
 }
 
+function isYouTubeUrl(url) {
+    return /(?:youtube\.com|youtu\.be)/i.test(url || '');
+}
+
+async function resolveYouTubeUrlViaSoundCloud(url, requestedBy) {
+    const info = await playdl.video_basic_info(url).catch(err => {
+        throw new Error(err.message || 'Failed to fetch YouTube metadata');
+    });
+
+    const details = info?.video_details;
+    if (!details) throw new Error('Failed to read YouTube video details');
+
+    const ytTrack = videoDetailsToTrack(details, requestedBy);
+    const query = [details.title, details.channel?.name].filter(Boolean).join(' ').trim();
+    if (!query) return [ytTrack];
+
+    const scResults = await playdl.search(query, {
+        source: { soundcloud: 'tracks' },
+        limit: 1,
+    }).catch(() => []);
+
+    if (!scResults.length) return [ytTrack];
+
+    const sc = normalizeSearchTrack(scResults[0], requestedBy);
+    return [{
+        ...ytTrack,
+        streamUrl: sc.url || ytTrack.url,
+        title: ytTrack.title || sc.title,
+        author: sc.author || ytTrack.author,
+        duration: sc.duration || ytTrack.duration,
+        thumbnail: sc.thumbnail || ytTrack.thumbnail,
+        album: sc.album || ytTrack.album || null,
+        source: 'soundcloud-from-youtube',
+    }];
+}
+
 function shouldExpandWatchMix(url) {
     try {
         const parsed = new URL(url);
@@ -116,6 +152,10 @@ async function resolveYouTubeWatchMix(url, requestedBy) {
 async function resolveUrl(url, requestedBy) {
     const normalizedUrl = normalizeYouTubeUrl(url);
     const listId = parseYouTubeListId(normalizedUrl);
+    if (isYouTubeUrl(normalizedUrl) && !listId) {
+        return resolveYouTubeUrlViaSoundCloud(normalizedUrl, requestedBy);
+    }
+
     const playlistUrl = listId ? `https://www.youtube.com/playlist?list=${listId}` : normalizedUrl;
 
     const playlist = await playdl.playlist_info(playlistUrl, { incomplete: true }).catch(() => null);
