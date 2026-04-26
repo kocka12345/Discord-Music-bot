@@ -19,6 +19,7 @@ const {
 const fs = require('fs');
 const path = require('path');
 const { resolve } = require('./resolver');
+const log = require('./logger');
 
 const client = new Client({
   intents: [
@@ -76,11 +77,34 @@ function normalizePlaylist(pl) {
   return pl;
 }
 
-client.once('ready', () => console.log(`Logged in as ${client.user.tag}`));
+async function safeInteractionErrorReply(interaction) {
+  const msg = { content: 'Something went wrong.', ephemeral: true };
+  try {
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(msg);
+    } else {
+      await interaction.reply(msg);
+    }
+  } catch (replyErr) {
+    // 10062 = Unknown interaction (expired/invalid token)
+    // 40060 = Interaction already acknowledged
+    if (replyErr?.code === 10062 || replyErr?.code === 40060) {
+      log.warn('interaction', 'Could not send error reply:', replyErr.code);
+      return;
+    }
+    log.error('interaction', 'Error reply failed:', replyErr);
+  }
+}
+
+client.once('clientReady', () => {
+  log.info('startup', `Logged in as ${client.user.tag}`);
+  log.info('startup', `DEBUG_LOGS=${String(process.env.DEBUG_LOGS || 'false')}`);
+});
 
 // ── Slash commands ─────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
+  log.debug('interaction', `/${interaction.commandName} by ${interaction.user?.id} in guild ${interaction.guildId}`);
 
   refreshBlocked(); // keep blocked list fresh
 
@@ -89,11 +113,17 @@ client.on('interactionCreate', async interaction => {
   try {
     await command.execute(interaction, client);
   } catch (err) {
-    console.error(`Error in /${interaction.commandName}:`, err);
-    const msg = { content: 'Something went wrong.', ephemeral: true };
-    if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
-    else await interaction.reply(msg);
+    log.error('command', `Error in /${interaction.commandName}:`, err);
+    await safeInteractionErrorReply(interaction);
   }
+});
+
+client.on('error', err => {
+  log.error('client', err);
+});
+
+process.on('unhandledRejection', reason => {
+  log.error('process', 'unhandledRejection:', reason);
 });
 
 // ── Button: open playlist picker (add to playlist from now-playing message) ───

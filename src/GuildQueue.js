@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { getYtDlpAuthArgs, getYtDlpAuthDebugInfo } = require('./ytDlpConfig');
+const log = require('./logger');
 
 let authLogged = false;
 
@@ -18,7 +19,8 @@ function logAuthInfoOnce(context) {
   if (authLogged) return;
   authLogged = true;
   const info = getYtDlpAuthDebugInfo();
-  console.log(
+  log.info(
+    'yt-dlp-auth',
     `[yt-dlp auth][${context}] hasCookies=${info.hasCookies} source=${info.cookiesSource} ` +
     `cookiesPath=${info.cookiesPath || 'none'} extractorArgs=${info.hasExtractorArgs}`
   );
@@ -48,8 +50,17 @@ function createYtDlpStream(url) {
   const ytdlp = getYtDlpPath();
   const authArgs = getYtDlpAuthArgs();
   logAuthInfoOnce('stream');
-  console.log(`[resolver] Using binary for streaming: ${ytdlp}`); // Změněno na [resolver] pro kontrolu
-  console.log(`[yt-dlp] Streaming: ${url}`);
+  log.info('stream', `Using binary for streaming: ${ytdlp}`);
+  log.info('stream', `Streaming: ${url}`);
+  log.debug('stream', 'Spawn args:', [
+    '-f', '251/250/249/140/bestaudio/best',
+    '--no-playlist',
+    '-o', '-',
+    '--quiet',
+    '--no-warnings',
+    ...authArgs,
+    url,
+  ]);
   const proc = spawn(ytdlp, [
     // Explicit fallbacks: these audio formats are commonly available
     // even when generic bestaudio selectors fail on cloud hosts.
@@ -61,9 +72,9 @@ function createYtDlpStream(url) {
     ...authArgs,
     url,
   ]);
-  proc.stderr.on('data', d => console.error('[yt-dlp stderr]', d.toString().trim()));
-  proc.on('error', err => console.error('[yt-dlp spawn error]', err.message));
-  proc.on('close', code => console.log(`[yt-dlp] exited with code ${code}`));
+  proc.stderr.on('data', d => log.error('yt-dlp-stderr', d.toString().trim()));
+  proc.on('error', err => log.error('yt-dlp-spawn', err.message));
+  proc.on('close', code => log.info('stream', `yt-dlp exited with code ${code}`));
   return proc.stdout;
 }
 
@@ -86,7 +97,7 @@ class GuildQueue {
     });
 
     this.player.on('error', err => {
-      console.error('Player error:', err.message);
+      log.error('player', 'Player error:', err.message);
       this._onTrackEnd();
     });
 
@@ -125,7 +136,7 @@ class GuildQueue {
       this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
       this._startLyricsDisplay();
     } catch (err) {
-      console.error('Stream error:', err.message);
+      log.error('stream', 'Stream error:', err.message);
       this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
       this.playNext();
     }
