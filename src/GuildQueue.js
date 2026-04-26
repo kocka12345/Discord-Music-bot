@@ -9,8 +9,16 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('
 const playdl = require('play-dl');
 const log = require('./logger');
 
+const PRECACHE_AHEAD_SECONDS = 30;
+const MIN_PRECACHE_DELAY_MS = 3_000;
+
 function isYouTubeUrl(url) {
   return /(?:youtube\.com|youtu\.be)/i.test(url || '');
+}
+
+function sameTrack(a, b) {
+  if (!a || !b) return false;
+  return (a.url || '') === (b.url || '') && (a.title || '') === (b.title || '');
 }
 
 async function trySoundCloudFallback(query) {
@@ -93,11 +101,14 @@ class GuildQueue {
     this._trackStartedAt = 0;
     this._pausedAt = 0;
     this._pausedAccumulatedMs = 0;
+    this._precacheTimer = null;
+    this._preloadedNext = null;
     this.lyricsEnabled = true;
 
     this.connection.subscribe(this.player);
 
     this.player.on(AudioPlayerStatus.Idle, () => {
+      log.debug('player', `Audio player idle. queueSize=${this.tracks.length}`);
       this._onTrackEnd();
     });
 
@@ -113,15 +124,18 @@ class GuildQueue {
           entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
         ]);
       } catch {
+        log.warn('voice', 'Voice disconnected and reconnect failed. Destroying queue.');
         this.destroy();
       }
     });
   }
 
   async playNext() {
+    this._clearPrecache();
+
     if (this.tracks.length === 0) {
       this.currentTrack = null;
-      this.textChannel.send('✅ Queue finished! Add more songs with `/play`.');
+      this.textChannel.send('✅ Queue finished! Add more songs with `/play`.').catch(() => {});
       this._stopLyricsDisplay();
       return;
     }
@@ -129,7 +143,14 @@ class GuildQueue {
     this.currentTrack = this.tracks.shift();
 
     try {
-      const { source, activeTrack } = await createPlayableSourceWithFallback(this.currentTrack);
+      let prepared = null;
+      if (this._preloadedNext && sameTrack(this.currentTrack, this._preloadedNext.track)) {
+        prepared = this._preloadedNext;
+        this._preloadedNext = null;
+        log.info('precache', `Using preloaded stream for: ${this.currentTrack.title}`);
+      }
+
+      const { source, activeTrack } = prepared || await createPlayableSourceWithFallback(this.currentTrack);
       this.currentTrack = activeTrack;
 
       this._resource = createAudioResource(source.stream, {
@@ -142,14 +163,15 @@ class GuildQueue {
       this._pausedAt = 0;
       this._pausedAccumulatedMs = 0;
 
-      this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
+      this.textChannel.send(this._nowPlayingEmbed(this.currentTrack)).catch(() => {});
       if (this.currentTrack.source === 'soundcloud-fallback') {
-        this.textChannel.send('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
+        this.textChannel.send('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.').catch(() => {});
       }
       this._startLyricsDisplay(0);
+      this._schedulePrecache();
     } catch (err) {
       log.error('stream', 'Primary stream error:', err.message);
-      this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
+      this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`).catch(() => {});
       this.playNext().catch(nextErr => {
         log.error('stream', 'Failed to continue queue after stream error:', nextErr.message);
       });
@@ -157,6 +179,7 @@ class GuildQueue {
   }
 
   _onTrackEnd() {
+    this._clearPrecache();
     this._stopLyricsDisplay();
     if (this.loopMode === 'track' && this.currentTrack) {
       this.tracks.unshift(this.currentTrack);
@@ -168,7 +191,7 @@ class GuildQueue {
     });
   }
 
-  skip() { this._stopLyricsDisplay(); this.player.stop(true); }
+  skip() { this._clearPrecache(); this._stopLyricsDisplay(); this.player.stop(true); }
   pause() {
     if (!this._pausedAt) this._pausedAt = Date.now();
     this.player.pause();
@@ -187,6 +210,7 @@ class GuildQueue {
   }
 
   stop() {
+    this._clearPrecache();
     this.tracks = [];
     this.currentTrack = null;
     this._stopLyricsDisplay();
@@ -198,17 +222,53 @@ class GuildQueue {
     try { this.connection.destroy(); } catch {}
   }
 
-  addTrack(track) { this.tracks.push(track); }
-  addTrackNext(track) { this.tracks.unshift(track); }
+  addTrack(track) { this._clearPrecache(); this.tracks.push(track); }
+  addTrackNext(track) { this._clearPrecache(); this.tracks.unshift(track); }
   removeTrack(index) {
+    this._clearPrecache();
     if (index < 0 || index >= this.tracks.length) return null;
     return this.tracks.splice(index, 1)[0];
   }
   shuffleQueue() {
+    this._clearPrecache();
     for (let i = this.tracks.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [this.tracks[i], this.tracks[j]] = [this.tracks[j], this.tracks[i]];
     }
+  }
+
+  _clearPrecache() {
+    if (this._precacheTimer) {
+      clearTimeout(this._precacheTimer);
+      this._precacheTimer = null;
+    }
+    this._preloadedNext = null;
+  }
+
+  _schedulePrecache() {
+    if (!this.currentTrack || this.tracks.length === 0) return;
+    if (!this.currentTrack.duration || this.currentTrack.duration <= 0) return;
+
+    const startInMs = Math.max(
+      MIN_PRECACHE_DELAY_MS,
+      (this.currentTrack.duration - PRECACHE_AHEAD_SECONDS) * 1000
+    );
+
+    this._precacheTimer = setTimeout(() => {
+      this._precacheNextTrack().catch(err => {
+        log.warn('precache', `Failed to precache next track: ${err.message}`);
+      });
+    }, startInMs);
+  }
+
+  async _precacheNextTrack() {
+    if (this._preloadedNext) return;
+    const candidate = this.tracks[0];
+    if (!candidate) return;
+
+    log.info('precache', `Preloading next track: ${candidate.title}`);
+    const { source, activeTrack } = await createPlayableSourceWithFallback(candidate);
+    this._preloadedNext = { source, track: activeTrack };
   }
 
   _startLyricsDisplay(startOffsetSec = 0) {
@@ -239,15 +299,23 @@ class GuildQueue {
   }
 
   _nowPlayingEmbed(track) {
-    const showLink = isYouTubeUrl(track.url);
+    const showLink = Boolean(track.url);
+    const sourceLabel = track.source === 'soundcloud-fallback'
+      ? 'SoundCloud fallback'
+      : (isYouTubeUrl(track.url) ? 'YouTube' : 'SoundCloud/Other');
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
-      .setTitle(`▶️ Now Playing`)
+      .setTitle('Now Playing')
       .setDescription([
         `**${track.title}**`,
-        `👤 ${track.author}  •  ⏱️ ${this._formatDuration(track.duration)}`,
+        `👤 **Artist:** ${track.author || 'Unknown Artist'}`,
+        track.album ? `💿 **Album:** ${track.album}` : null,
+        `⏱️ **Duration:** ${this._formatDuration(track.duration)}`,
+        `🌐 **Source:** ${sourceLabel}`,
         track.requestedBy ? `Requested by <@${track.requestedBy}>` : '',
-      ].filter(Boolean).join('\n'));
+      ].filter(Boolean).join('\n'))
+      .setFooter({ text: 'discord-music-bot' })
+      .setTimestamp();
 
     if (showLink) embed.setURL(track.url);
     if (track.thumbnail) embed.setThumbnail(track.thumbnail);

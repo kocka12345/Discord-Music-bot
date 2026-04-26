@@ -1,5 +1,6 @@
 const playdl = require('play-dl');
 const log = require('./logger');
+const { enrichTrackMetadata } = require('./trackMetadata');
 
 function pickFirst(...values) {
     for (const value of values) {
@@ -139,7 +140,8 @@ async function resolveUrl(url, requestedBy) {
     const info = await playdl.video_basic_info(normalizedUrl).catch(err => {
         throw new Error(err.message || 'Failed to fetch video info');
     });
-    return [videoDetailsToTrack(info.video_details, requestedBy)];
+    const single = videoDetailsToTrack(info.video_details, requestedBy);
+    return [await enrichTrackMetadata(single)];
 }
 
 async function resolve(input, requestedBy) {
@@ -168,7 +170,7 @@ async function resolve(input, requestedBy) {
         log.info('resolver', 'Selected YouTube fallback result:', found.url);
     }
 
-    return [normalizeSearchTrack(found, requestedBy)];
+    return [await enrichTrackMetadata(normalizeSearchTrack(found, requestedBy))];
 }
 
 module.exports = { resolve };
