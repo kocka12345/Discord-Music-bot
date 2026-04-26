@@ -1,0 +1,15 @@
+# Ignorovat tajné klíče
+.env
+
+# Ignorovat knihovny (pro Node.js)
+node_modules/
+
+# Ignorovat knihovny (pro Python)
+__pycache__/
+*.pyc
+
+yt-dlp.exe
+
+ffmpeg.exe
+
+at vis co to je.txt
