@@ -13,17 +13,24 @@ const nowplayingCmd = {
 
     const t = queue.currentTrack;
     const status = queue.isPlaying() ? '▶️ Playing' : '⏸️ Paused';
-    const isYouTube = /(?:youtube\.com|youtu\.be)/i.test(t.url || '');
+    const sourceLabel = t.source === 'soundcloud-fallback'
+      ? 'SoundCloud fallback'
+      : /(?:youtube\.com|youtu\.be)/i.test(t.url || '') ? 'YouTube' : 'SoundCloud/Other';
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle(`${status} — ${t.title}`)
       .setDescription([
-        `👤 ${t.author}  •  ⏱️ ${fmt(t.duration)}`,
+        `👤 **Artist:** ${t.author || 'Unknown Artist'}`,
+        t.album ? `💿 **Album:** ${t.album}` : null,
+        `⏱️ **Duration:** ${fmt(t.duration)}`,
+        `🌐 **Source:** ${sourceLabel}`,
         t.requestedBy ? `Requested by <@${t.requestedBy}>` : '',
-      ].filter(Boolean).join('\n'));
+      ].filter(Boolean).join('\n'))
+      .setFooter({ text: 'discord-music-bot' })
+      .setTimestamp();
 
     if (t.thumbnail) embed.setThumbnail(t.thumbnail);
-    if (isYouTube) embed.setURL(t.url);
+    if (t.url) embed.setURL(t.url);
 
     await interaction.reply({ embeds: [embed] });
   },
