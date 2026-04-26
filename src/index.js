@@ -1,9 +1,5 @@
 require('dotenv').config();
 const http = require('http');
-http.createServer((req, res) => {
-  res.write('Bot bezi!');
-  res.end();
-}).listen(process.env.PORT || 10000);
 const {
   Client,
   GatewayIntentBits,
@@ -29,6 +25,24 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
   ],
 });
+
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    const ready = client.isReady();
+    const payload = JSON.stringify({
+      ok: ready,
+      status: ready ? 'ready' : 'starting',
+      uptimeSec: Math.floor(process.uptime()),
+      queues: client.queues?.size || 0,
+    });
+    res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(payload);
+    return;
+  }
+
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Bot bezi!');
+}).listen(process.env.PORT || 10000);
 
 initPlayDlAuth().catch(err => {
   log.warn('play-dl-auth', `Initialization finished with warning: ${err.message}`);
@@ -139,6 +153,57 @@ process.on('unhandledRejection', reason => {
 // ── Button: open playlist picker (add to playlist from now-playing message) ───
 client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
+
+  if (interaction.customId.startsWith('npctl:')) {
+    const queue = client.queues.get(interaction.guildId);
+    if (!queue || !queue.currentTrack) {
+      return interaction.reply({ content: '❌ Nothing is playing.', ephemeral: true });
+    }
+
+    const action = interaction.customId.slice('npctl:'.length);
+    if (action === 'toggle_pause') {
+      if (queue.isPaused()) {
+        queue.resume();
+        return interaction.reply({ content: '▶️ Resumed.', ephemeral: true });
+      }
+      if (queue.isPlaying()) {
+        queue.pause();
+        return interaction.reply({ content: '⏸️ Paused.', ephemeral: true });
+      }
+      return interaction.reply({ content: '❌ Nothing is playing.', ephemeral: true });
+    }
+
+    if (action === 'next') {
+      const skipped = queue.currentTrack?.title || 'current track';
+      queue.skip();
+      return interaction.reply({ content: `⏭️ Skipped **${skipped}**`, ephemeral: true });
+    }
+
+    if (action === 'previous') {
+      const ok = queue.playPrevious();
+      if (!ok) {
+        return interaction.reply({ content: '❌ No previous track in history yet.', ephemeral: true });
+      }
+      return interaction.reply({ content: '⏮️ Playing previous track.', ephemeral: true });
+    }
+
+    if (action === 'shuffle') {
+      if (queue.tracks.length < 2) {
+        return interaction.reply({ content: '❌ Not enough tracks to shuffle.', ephemeral: true });
+      }
+      queue.shuffleQueue();
+      return interaction.reply({ content: `🔀 Queue shuffled! (${queue.tracks.length} tracks)`, ephemeral: true });
+    }
+
+    if (action === 'show_queue') {
+      return interaction.reply({
+        content: queue.buildQueuePreview(10),
+        ephemeral: true,
+      });
+    }
+
+    return;
+  }
 
   // ── "Add to playlist" button on now-playing message ──
   if (interaction.customId.startsWith('add_to_playlist:')) {

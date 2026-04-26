@@ -11,6 +11,8 @@ const log = require('./logger');
 
 const PRECACHE_AHEAD_SECONDS = 30;
 const MIN_PRECACHE_DELAY_MS = 3_000;
+const TEMP_MESSAGE_TTL_MS = 30_000;
+const HISTORY_LIMIT = 25;
 
 function isYouTubeUrl(url) {
   return /(?:youtube\.com|youtu\.be)/i.test(url || '');
@@ -93,6 +95,7 @@ class GuildQueue {
     this.textChannel = textChannel;
     this.tracks = [];
     this.currentTrack = null;
+    this.history = [];
     this.player = createAudioPlayer();
     this.loopMode = 'none';
     this.volume = 0.5;
@@ -103,6 +106,8 @@ class GuildQueue {
     this._pausedAccumulatedMs = 0;
     this._precacheTimer = null;
     this._preloadedNext = null;
+    this._lastNowPlayingMessage = null;
+    this._lyricsDmBlockedWarned = false;
     this.lyricsEnabled = true;
 
     this.connection.subscribe(this.player);
@@ -135,7 +140,7 @@ class GuildQueue {
 
     if (this.tracks.length === 0) {
       this.currentTrack = null;
-      this.textChannel.send('✅ Queue finished! Add more songs with `/play`.').catch(() => {});
+      this._sendTemporaryChannelMessage('✅ Queue finished! Add more songs with `/play`.');
       this._stopLyricsDisplay();
       return;
     }
@@ -163,15 +168,17 @@ class GuildQueue {
       this._pausedAt = 0;
       this._pausedAccumulatedMs = 0;
 
-      this.textChannel.send(this._nowPlayingEmbed(this.currentTrack)).catch(() => {});
+      this._deleteLastNowPlayingMessage();
+      this._lastNowPlayingMessage = await this._sendTemporaryChannelMessage(this._nowPlayingEmbed(this.currentTrack));
       if (this.currentTrack.source === 'soundcloud-fallback') {
-        this.textChannel.send('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.').catch(() => {});
+        this._sendTemporaryChannelMessage('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
       }
+      this._lyricsDmBlockedWarned = false;
       this._startLyricsDisplay(0);
       this._schedulePrecache();
     } catch (err) {
       log.error('stream', 'Primary stream error:', err.message);
-      this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`).catch(() => {});
+      this._sendTemporaryChannelMessage(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
       this.playNext().catch(nextErr => {
         log.error('stream', 'Failed to continue queue after stream error:', nextErr.message);
       });
@@ -180,7 +187,12 @@ class GuildQueue {
 
   _onTrackEnd() {
     this._clearPrecache();
+    this._deleteLastNowPlayingMessage();
     this._stopLyricsDisplay();
+    if (this.currentTrack) {
+      this.history.push(this.currentTrack);
+      if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    }
     if (this.loopMode === 'track' && this.currentTrack) {
       this.tracks.unshift(this.currentTrack);
     } else if (this.loopMode === 'queue' && this.currentTrack) {
@@ -211,7 +223,9 @@ class GuildQueue {
 
   stop() {
     this._clearPrecache();
+    this._deleteLastNowPlayingMessage();
     this.tracks = [];
+    this.history = [];
     this.currentTrack = null;
     this._stopLyricsDisplay();
     this.player.stop(true);
@@ -235,6 +249,17 @@ class GuildQueue {
       const j = Math.floor(Math.random() * (i + 1));
       [this.tracks[i], this.tracks[j]] = [this.tracks[j], this.tracks[i]];
     }
+  }
+
+  playPrevious() {
+    const previous = this.history.pop();
+    if (!previous) return false;
+    if (this.currentTrack) {
+      this.tracks.unshift(this.currentTrack);
+    }
+    this.tracks.unshift(previous);
+    this.skip();
+    return true;
   }
 
   _clearPrecache() {
@@ -290,11 +315,46 @@ class GuildQueue {
     const lyrics = this.currentTrack?.lyrics;
     if (!lyrics || this._lyricsIndex >= lyrics.length) return;
     const line = lyrics[this._lyricsIndex++];
-    if (line.text?.trim()) this.textChannel.send(`🎵 *${line.text}*`).catch(() => {});
+    if (line.text?.trim()) this._sendTemporaryLyricsToRequester(`🎵 *${line.text}*`);
     const nextLine = lyrics[this._lyricsIndex];
     if (nextLine) {
       const delay = Math.max(0, (nextLine.time - line.time) * 1000);
       this._lyricsInterval = setTimeout(() => this._postNextLyricLine(), delay);
+    }
+  }
+
+  async _sendTemporaryChannelMessage(payload) {
+    try {
+      const msg = await this.textChannel.send(payload);
+      setTimeout(() => {
+        msg.delete().catch(() => {});
+      }, TEMP_MESSAGE_TTL_MS);
+      return msg;
+    } catch {
+      return null;
+    }
+  }
+
+  _deleteLastNowPlayingMessage() {
+    if (!this._lastNowPlayingMessage) return;
+    this._lastNowPlayingMessage.delete().catch(() => {});
+    this._lastNowPlayingMessage = null;
+  }
+
+  async _sendTemporaryLyricsToRequester(content) {
+    const userId = this.currentTrack?.requestedBy;
+    if (!userId) return;
+    try {
+      const user = await this.textChannel.client.users.fetch(userId);
+      const dm = await user.send(content);
+      setTimeout(() => {
+        dm.delete().catch(() => {});
+      }, TEMP_MESSAGE_TTL_MS);
+    } catch (err) {
+      if (!this._lyricsDmBlockedWarned) {
+        this._lyricsDmBlockedWarned = true;
+        log.warn('lyrics', `Could not DM lyrics to user ${userId}: ${err.message}`);
+      }
     }
   }
 
@@ -320,14 +380,37 @@ class GuildQueue {
     if (showLink) embed.setURL(track.url);
     if (track.thumbnail) embed.setThumbnail(track.thumbnail);
 
-    const row = new ActionRowBuilder().addComponents(
+    const controlsRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('npctl:toggle_pause')
+        .setLabel('⏯ Pause/Resume')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('npctl:previous')
+        .setLabel('⏮ Previous')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('npctl:next')
+        .setLabel('⏭ Next')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('npctl:shuffle')
+        .setLabel('🔀 Shuffle')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('npctl:show_queue')
+        .setLabel('📜 Queue')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    const playlistRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`add_to_playlist:${track.url}`)
         .setLabel('➕ Add to Playlist')
         .setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [row] };
+    return { embeds: [embed], components: [controlsRow, playlistRow] };
   }
 
   _formatDuration(seconds) {
@@ -354,6 +437,24 @@ class GuildQueue {
     if (this.currentTrack?.lyrics?.length) {
       this._startLyricsDisplay(this.getElapsedPlaybackSeconds());
     }
+  }
+  buildQueuePreview(pageSize = 10) {
+    const lines = [];
+    if (this.currentTrack) {
+      lines.push(`▶️ Now: **${this.currentTrack.title}** — \`${this._formatDuration(this.currentTrack.duration)}\``);
+    }
+    if (!this.tracks.length) {
+      lines.push('📭 Queue is empty.');
+      return lines.join('\n');
+    }
+    lines.push(`\nUp next (${this.tracks.length}):`);
+    this.tracks.slice(0, pageSize).forEach((t, i) => {
+      lines.push(`\`${i + 1}.\` ${t.title} — \`${this._formatDuration(t.duration)}\``);
+    });
+    if (this.tracks.length > pageSize) {
+      lines.push(`...and ${this.tracks.length - pageSize} more`);
+    }
+    return lines.join('\n').slice(0, 1900);
   }
 }
 
