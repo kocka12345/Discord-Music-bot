@@ -10,7 +10,19 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { getYtDlpAuthArgs } = require('./ytDlpConfig');
+const { getYtDlpAuthArgs, getYtDlpAuthDebugInfo } = require('./ytDlpConfig');
+
+let authLogged = false;
+
+function logAuthInfoOnce(context) {
+  if (authLogged) return;
+  authLogged = true;
+  const info = getYtDlpAuthDebugInfo();
+  console.log(
+    `[yt-dlp auth][${context}] hasCookies=${info.hasCookies} source=${info.cookiesSource} ` +
+    `cookiesPath=${info.cookiesPath || 'none'} extractorArgs=${info.hasExtractorArgs}`
+  );
+}
 
 // Find yt-dlp binary - OPRAVENO PRO RENDER
 function getYtDlpPath() {
@@ -35,6 +47,7 @@ function getYtDlpPath() {
 function createYtDlpStream(url) {
   const ytdlp = getYtDlpPath();
   const authArgs = getYtDlpAuthArgs();
+  logAuthInfoOnce('stream');
   console.log(`[resolver] Using binary for streaming: ${ytdlp}`); // Změněno na [resolver] pro kontrolu
   console.log(`[yt-dlp] Streaming: ${url}`);
   const proc = spawn(ytdlp, [
