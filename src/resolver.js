@@ -67,9 +67,57 @@ function videoDetailsToTrack(details, requestedBy) {
     };
 }
 
+function parseYouTubeListId(url) {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host !== 'youtube.com' && host !== 'm.youtube.com') return null;
+        return parsed.searchParams.get('list');
+    } catch {
+        return null;
+    }
+}
+
+function shouldExpandWatchMix(url) {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host !== 'youtube.com' && host !== 'm.youtube.com') return false;
+        return parsed.pathname === '/watch' && !parsed.searchParams.get('list');
+    } catch {
+        return false;
+    }
+}
+
+async function resolveYouTubeWatchMix(url, requestedBy) {
+    const seed = await playdl.video_basic_info(url).catch(err => {
+        throw new Error(err.message || 'Failed to load YouTube watch info');
+    });
+
+    const tracks = [videoDetailsToTrack(seed.video_details, requestedBy)];
+    const related = Array.isArray(seed.related_videos) ? seed.related_videos : [];
+    const unique = [...new Set(related)].slice(0, 15);
+    if (!unique.length) return tracks;
+
+    // Add related URLs as lightweight tracks to emulate playlist behavior.
+    tracks.push(...unique.map((relatedUrl, idx) => ({
+        title: `Mix Track ${idx + 1}`,
+        url: relatedUrl,
+        author: 'YouTube Mix',
+        duration: 0,
+        thumbnail: null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+    })));
+    return tracks;
+}
+
 async function resolveUrl(url, requestedBy) {
     const normalizedUrl = normalizeYouTubeUrl(url);
-    const playlist = await playdl.playlist_info(normalizedUrl, { incomplete: true }).catch(() => null);
+    const listId = parseYouTubeListId(normalizedUrl);
+    const playlistUrl = listId ? `https://www.youtube.com/playlist?list=${listId}` : normalizedUrl;
+
+    const playlist = await playdl.playlist_info(playlistUrl, { incomplete: true }).catch(() => null);
     if (playlist) {
         const videos = await playlist.all_videos();
         if (!videos?.length) throw new Error('Playlist is empty or unavailable.');
@@ -82,6 +130,10 @@ async function resolveUrl(url, requestedBy) {
             requestedBy: requestedBy || null,
             lyrics: null,
         }));
+    }
+
+    if (shouldExpandWatchMix(normalizedUrl)) {
+        return resolveYouTubeWatchMix(normalizedUrl, requestedBy);
     }
 
     const info = await playdl.video_basic_info(normalizedUrl).catch(err => {
