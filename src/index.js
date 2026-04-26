@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { resolve } = require('./resolver');
 const log = require('./logger');
+const { initPlayDlAuth } = require('./playDlAuth');
 
 const client = new Client({
   intents: [
@@ -28,6 +29,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
   ],
 });
+
+initPlayDlAuth();
 
 // ── Load commands ────────────────────────────────────────────────────────────
 client.commands = new Collection();

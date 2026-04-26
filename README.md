@@ -148,8 +148,23 @@ Recommended Render settings:
   - `CLIENT_ID`
   - `GUILD_ID` (optional, for fast guild command updates)
   - `DEBUG_LOGS=true` (optional, enables verbose logs)
+  - `PLAYDL_YOUTUBE_COOKIE_B64` (recommended for YouTube on cloud hosts)
 
 If voice playback fails on Render, make sure your service can open UDP voice connections and your bot has `Connect` + `Speak` permissions in Discord.
+
+### YouTube 429 mitigation for play-dl
+
+Cloud IPs can get rate-limited by YouTube (`429`).  
+This bot now supports passing YouTube cookies directly to `play-dl`.
+
+Use one of these env vars:
+
+- `PLAYDL_YOUTUBE_COOKIE` — cookie header string (`k1=v1; k2=v2; ...`)
+- `PLAYDL_YOUTUBE_COOKIE_B64` — base64 of a Netscape `cookies.txt` file (recommended)
+
+Backward compatibility:
+
+- `YTDLP_COOKIES_B64` and `YTDLP_COOKIES` are still accepted and mapped to play-dl token loading.
 
 ---
 
