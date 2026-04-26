@@ -186,6 +186,9 @@ To enable this reliably on Render:
 - **Voice output:** `@discordjs/voice`
 - **Provider strategy:** text search prefers SoundCloud first (YouTube fallback) to reduce cloud-host `429` failures
 - **Rate-limit fallback:** when YouTube returns `429` on cloud hosts, playback automatically retries via SoundCloud search for the same track query
+- **Custom YouTube watch-link handling:** `/play` now supports:
+  - `watch?v=...&list=...` links by automatically resolving the `list` playlist ID
+  - `watch?v=...` links without `list` as a "mix" (seed track + related tracks queue)
 
 ---
 
