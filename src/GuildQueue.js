@@ -107,7 +107,6 @@ class GuildQueue {
     this._precacheTimer = null;
     this._preloadedNext = null;
     this._lastNowPlayingMessage = null;
-    this._lyricsDmBlockedWarned = false;
     this.lyricsEnabled = true;
 
     this.connection.subscribe(this.player);
@@ -169,11 +168,10 @@ class GuildQueue {
       this._pausedAccumulatedMs = 0;
 
       this._deleteLastNowPlayingMessage();
-      this._lastNowPlayingMessage = await this._sendTemporaryChannelMessage(this._nowPlayingEmbed(this.currentTrack));
+      this._lastNowPlayingMessage = await this._sendPersistentChannelMessage(this._nowPlayingEmbed(this.currentTrack));
       if (this.currentTrack.source === 'soundcloud-fallback') {
         this._sendTemporaryChannelMessage('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
       }
-      this._lyricsDmBlockedWarned = false;
       this._startLyricsDisplay(0);
       this._schedulePrecache();
     } catch (err) {
@@ -315,7 +313,7 @@ class GuildQueue {
     const lyrics = this.currentTrack?.lyrics;
     if (!lyrics || this._lyricsIndex >= lyrics.length) return;
     const line = lyrics[this._lyricsIndex++];
-    if (line.text?.trim()) this._sendTemporaryLyricsToRequester(`🎵 *${line.text}*`);
+    if (line.text?.trim()) this._sendLyricsToQueueChannel(`🎵 ${this._lyricsPrefix()} *${line.text}*`);
     const nextLine = lyrics[this._lyricsIndex];
     if (nextLine) {
       const delay = Math.max(0, (nextLine.time - line.time) * 1000);
@@ -335,26 +333,31 @@ class GuildQueue {
     }
   }
 
+  async _sendPersistentChannelMessage(payload) {
+    try {
+      return await this.textChannel.send(payload);
+    } catch {
+      return null;
+    }
+  }
+
   _deleteLastNowPlayingMessage() {
     if (!this._lastNowPlayingMessage) return;
     this._lastNowPlayingMessage.delete().catch(() => {});
     this._lastNowPlayingMessage = null;
   }
 
-  async _sendTemporaryLyricsToRequester(content) {
+  _lyricsPrefix() {
     const userId = this.currentTrack?.requestedBy;
-    if (!userId) return;
+    return userId ? `<@${userId}>` : '';
+  }
+
+  async _sendLyricsToQueueChannel(content) {
+    const userId = this.currentTrack?.requestedBy;
     try {
-      const user = await this.textChannel.client.users.fetch(userId);
-      const dm = await user.send(content);
-      setTimeout(() => {
-        dm.delete().catch(() => {});
-      }, TEMP_MESSAGE_TTL_MS);
+      await this.textChannel.send(content);
     } catch (err) {
-      if (!this._lyricsDmBlockedWarned) {
-        this._lyricsDmBlockedWarned = true;
-        log.warn('lyrics', `Could not DM lyrics to user ${userId}: ${err.message}`);
-      }
+      log.warn('lyrics', `Could not post lyrics to text channel for user ${userId || 'unknown'}: ${err.message}`);
     }
   }
 
