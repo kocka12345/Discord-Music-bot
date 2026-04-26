@@ -9,12 +9,55 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const playdl = require('play-dl');
 const log = require('./logger');
 
+function isYouTubeUrl(url) {
+  return /(?:youtube\.com|youtu\.be)/i.test(url || '');
+}
+
+async function trySoundCloudFallback(query) {
+  const results = await playdl.search(query, {
+    source: { soundcloud: 'tracks' },
+    limit: 1,
+  });
+  if (!results?.length) return null;
+  return results[0];
+}
+
 async function createPlayableStream(url) {
   log.info('stream', `Creating play-dl stream: ${url}`);
   const source = await playdl.stream(url, {
     discordPlayerCompatibility: true,
   });
   return source;
+}
+
+async function createPlayableSourceWithFallback(track) {
+  try {
+    const source = await createPlayableStream(track.url);
+    return { source, activeTrack: track };
+  } catch (err) {
+    const message = String(err?.message || '');
+    const isRateLimit = message.includes('429');
+    const shouldFallback = isRateLimit && isYouTubeUrl(track.url);
+
+    if (!shouldFallback) throw err;
+
+    const query = [track.title, track.author].filter(Boolean).join(' ');
+    log.warn('stream', `YouTube rate-limited, trying SoundCloud fallback for: ${query}`);
+    const fallback = await trySoundCloudFallback(query);
+    if (!fallback) throw err;
+
+    const fallbackTrack = {
+      ...track,
+      title: fallback.title || track.title,
+      url: fallback.url || track.url,
+      author: fallback.user?.name || fallback.channel?.name || track.author,
+      duration: fallback.durationInSec || track.duration,
+      thumbnail: fallback.thumbnail || track.thumbnail || null,
+      source: 'soundcloud-fallback',
+    };
+    const source = await createPlayableStream(fallbackTrack.url);
+    return { source, activeTrack: fallbackTrack };
+  }
 }
 
 class GuildQueue {
@@ -63,7 +106,8 @@ class GuildQueue {
     this.currentTrack = this.tracks.shift();
 
     try {
-      const source = await createPlayableStream(this.currentTrack.url);
+      const { source, activeTrack } = await createPlayableSourceWithFallback(this.currentTrack);
+      this.currentTrack = activeTrack;
 
       this._resource = createAudioResource(source.stream, {
         inputType: source.type,
@@ -73,11 +117,16 @@ class GuildQueue {
       this.player.play(this._resource);
 
       this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
+      if (this.currentTrack.source === 'soundcloud-fallback') {
+        this.textChannel.send('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
+      }
       this._startLyricsDisplay();
     } catch (err) {
       log.error('stream', 'Stream error:', err.message);
       this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
-      this.playNext();
+      this.playNext().catch(nextErr => {
+        log.error('stream', 'Failed to continue queue after stream error:', nextErr.message);
+      });
     }
   }
 
@@ -88,7 +137,9 @@ class GuildQueue {
     } else if (this.loopMode === 'queue' && this.currentTrack) {
       this.tracks.push(this.currentTrack);
     }
-    this.playNext();
+    this.playNext().catch(err => {
+      log.error('queue', 'Failed to play next track on idle:', err.message);
+    });
   }
 
   skip() { this._stopLyricsDisplay(); this.player.stop(true); }
