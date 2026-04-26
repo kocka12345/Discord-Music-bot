@@ -10,9 +10,13 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { getYtDlpAuthArgs } = require('./ytDlpConfig');
 
 // Find yt-dlp binary - OPRAVENO PRO RENDER
 function getYtDlpPath() {
+  const envBin = process.env.YTDLP_BIN?.trim();
+  if (envBin) return envBin;
+
   // 1. Cesta na Renderu (ve složce src, kam to stahujeme přes Build Command)
   const renderPath = path.join(__dirname, 'yt-dlp');
   if (fs.existsSync(renderPath)) return renderPath;
@@ -30,6 +34,7 @@ function getYtDlpPath() {
 
 function createYtDlpStream(url) {
   const ytdlp = getYtDlpPath();
+  const authArgs = getYtDlpAuthArgs();
   console.log(`[resolver] Using binary for streaming: ${ytdlp}`); // Změněno na [resolver] pro kontrolu
   console.log(`[yt-dlp] Streaming: ${url}`);
   const proc = spawn(ytdlp, [
@@ -38,6 +43,7 @@ function createYtDlpStream(url) {
     '-o', '-',
     '--quiet',
     '--no-warnings',
+    ...authArgs,
     url,
   ]);
   proc.stderr.on('data', d => console.error('[yt-dlp stderr]', d.toString().trim()));

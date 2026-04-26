@@ -134,3 +134,30 @@ discord-music-bot/
 - **Loop modes**: `off` = play once, `track` = repeat current song, `queue` = repeat entire queue
 - You can `/play` while something is already playing — it just adds to the queue
 - YouTube playlists are supported — paste the playlist URL and all tracks are added
+
+---
+
+## 🌐 Render + yt-dlp auth (important)
+
+If Render logs show:
+
+`Sign in to confirm you're not a bot`
+
+you must provide YouTube auth data to `yt-dlp`.
+
+Supported environment variables in this bot:
+
+- `YTDLP_BIN` — `yt-dlp` executable path (Linux example: `/usr/bin/yt-dlp`)
+- `YTDLP_COOKIES_FILE` — absolute path to cookies file (Netscape format)
+- `YTDLP_COOKIES_B64` — base64 encoded cookies file content
+- `YTDLP_COOKIES` — raw cookies file content
+- `YTDLP_EXTRACTOR_ARGS` — optional extra extractor args passed to `yt-dlp`
+
+Render-friendly setup:
+
+1. Export YouTube cookies in Netscape format from your browser.
+2. Convert to base64.
+3. Set `YTDLP_COOKIES_B64` in Render environment variables.
+4. Redeploy.
+
+On startup, the bot writes that value to a temp file and runs `yt-dlp --cookies <tempfile> ...` for both metadata and streaming.

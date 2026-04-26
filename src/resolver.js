@@ -1,9 +1,13 @@
-const { execFile, spawn } = require('child_process');
+const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const playdl = require('play-dl');
+const { getYtDlpAuthArgs } = require('./ytDlpConfig');
 
 function getYtDlpPath() {
+    const envBin = process.env.YTDLP_BIN?.trim();
+    if (envBin) return envBin;
+
     // 1. Cesta na Renderu (ve složce src, kam to stahujeme přes Build Command)
     const renderPath = path.join(__dirname, 'yt-dlp');
     if (fs.existsSync(renderPath)) return renderPath;
@@ -23,10 +27,16 @@ function getYtDlpPath() {
 function ytDlpInfo(url) {
     return new Promise((resolve, reject) => {
         const ytdlp = getYtDlpPath();
+        const authArgs = getYtDlpAuthArgs();
         console.log('[resolver] Using binary:', ytdlp);
         
         execFile(ytdlp, [
-            '--dump-json', '--no-playlist', '--quiet', '--no-warnings', url,
+            '--dump-json',
+            '--no-playlist',
+            '--quiet',
+            '--no-warnings',
+            ...authArgs,
+            url,
         ], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) {
                 console.error('[resolver] yt-dlp error:', stderr || err.message);
