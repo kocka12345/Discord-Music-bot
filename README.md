@@ -137,7 +137,7 @@ discord-music-bot/
 
 ## 🌐 Render deployment notes
 
-This version uses **Lavalink-first resolving** (with `play-dl` fallback) for metadata/search and does not require shipping a `yt-dlp` binary.
+This version uses a `play-dl` resolver and does not require shipping a `yt-dlp` binary.
 
 Recommended Render settings:
 
@@ -170,10 +170,10 @@ On startup, the bot also initializes a free SoundCloud client ID for search/stre
 
 ## 🧰 Backend architecture
 
-- **Resolver backend:** Lavalink-first (`src/lavalinkResolver.js`), fallback to `play-dl` (`src/resolver.js`)
+- **Resolver backend:** `play-dl` (`src/resolver.js`)
 - **Stream backend:** `play-dl` stream source (`src/GuildQueue.js`)
 - **Voice output:** `@discordjs/voice`
-- **Provider strategy:** text search prefers YouTube first (SoundCloud fallback)
+- **Provider strategy:** text search prefers SoundCloud first (YouTube fallback)
 - **Rate-limit fallback:** when YouTube returns `429` on cloud hosts, playback automatically retries via SoundCloud search for the same track query
 - **Custom YouTube watch-link handling:** `/play` now supports:
   - `watch?v=...&list=...` links by automatically resolving the `list` playlist ID

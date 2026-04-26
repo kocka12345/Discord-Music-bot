@@ -1,6 +1,5 @@
 const playdl = require('play-dl');
 const log = require('./logger');
-const { getLavalinkConfig, resolveWithLavalink } = require('./lavalinkResolver');
 
 function pickFirst(...values) {
     for (const value of values) {
@@ -144,16 +143,6 @@ async function resolveUrl(url, requestedBy) {
 }
 
 async function resolve(input, requestedBy) {
-    const lavalinkConfig = getLavalinkConfig();
-    if (lavalinkConfig) {
-        try {
-            log.info('resolver', 'Resolving via Lavalink backend...');
-            return await resolveWithLavalink(input, requestedBy);
-        } catch (err) {
-            log.warn('resolver', `Lavalink resolve failed, using play-dl fallback: ${err.message}`);
-        }
-    }
-
     const trimmed = input.trim();
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
@@ -162,20 +151,21 @@ async function resolve(input, requestedBy) {
         return resolveUrl(trimmed, requestedBy);
     }
 
-    log.info('resolver', 'Searching via play-dl (YouTube first):', trimmed);
+    log.info('resolver', 'Searching via play-dl (SoundCloud first):', trimmed);
 
     let found = null;
 
-    const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 })
+    const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
         .catch(() => []);
-    if (ytResults.length) {
-        found = ytResults[0];
-        log.info('resolver', 'Selected YouTube result:', found.url);
-    } else {
-        const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 });
-        if (!scResults.length) throw new Error('No results found for: ' + trimmed);
+    if (scResults.length) {
         found = scResults[0];
         log.info('resolver', 'Selected SoundCloud result:', found.url);
+    } else {
+        const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 })
+            .catch(() => []);
+        if (!ytResults.length) throw new Error('No results found for: ' + trimmed);
+        found = ytResults[0];
+        log.info('resolver', 'Selected YouTube fallback result:', found.url);
     }
 
     return [normalizeSearchTrack(found, requestedBy)];
