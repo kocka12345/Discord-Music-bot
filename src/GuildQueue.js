@@ -11,22 +11,26 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Find yt-dlp binary
+// Find yt-dlp binary - OPRAVENO PRO RENDER
 function getYtDlpPath() {
-  // Check next to package.json (project root), works from any subdirectory
-  const root = path.join(__dirname, '..', 'yt-dlp.exe');
-  if (fs.existsSync(root)) return root;
+  // 1. Cesta na Renderu (ve složce src, kam to stahujeme přes Build Command)
+  const renderPath = path.join(__dirname, 'yt-dlp');
+  if (fs.existsSync(renderPath)) return renderPath;
+
+  // 2. Cesta u tebe na Windows (o úroveň výš)
+  const rootWin = path.join(__dirname, '..', 'yt-dlp.exe');
+  if (fs.existsSync(rootWin)) return rootWin;
+
+  // 3. Fallback pro root projektu na Linuxu
   const rootUnix = path.join(__dirname, '..', 'yt-dlp');
   if (fs.existsSync(rootUnix)) return rootUnix;
-  // Also check same directory as this file
-  const local = path.join(__dirname, 'yt-dlp.exe');
-  if (fs.existsSync(local)) return local;
-  return 'yt-dlp'; // fallback: assume it's in PATH
+
+  return 'yt-dlp';
 }
 
 function createYtDlpStream(url) {
   const ytdlp = getYtDlpPath();
-  console.log(`[yt-dlp] Using binary: ${ytdlp}`);
+  console.log(`[resolver] Using binary for streaming: ${ytdlp}`); // Změněno na [resolver] pro kontrolu
   console.log(`[yt-dlp] Streaming: ${url}`);
   const proc = spawn(ytdlp, [
     '-f', 'bestaudio/best',
@@ -151,7 +155,7 @@ class GuildQueue {
   }
 
   _startLyricsDisplay() {
-    this._stopLyricsDisplay(); // cancel any existing interval first
+    this._stopLyricsDisplay();
     if (!this.currentTrack?.lyrics?.length) return;
     this._lyricsIndex = 0;
     this._postNextLyricLine();
