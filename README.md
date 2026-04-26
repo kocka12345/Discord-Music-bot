@@ -167,6 +167,16 @@ Backward compatibility:
 - `YTDLP_COOKIES_B64` and `YTDLP_COOKIES` are still accepted and mapped to play-dl token loading.
 - On startup, the bot also initializes a free SoundCloud client ID for search/stream fallback.
 
+### Last-resort cache fallback (optional)
+
+If direct stream + SoundCloud fallback both fail, the bot can try to download YouTube audio with `yt-dlp`,
+play from a temporary local cache file, and delete it 30 seconds after track end.
+
+To enable this reliably on Render:
+
+- Provide a `yt-dlp` binary and set `YTDLP_BIN` (for example `./src/yt-dlp`)
+- Keep `YTDLP_COOKIES_B64` (or `YTDLP_COOKIES`) configured for protected videos
+
 ---
 
 ## 🧰 Backend architecture

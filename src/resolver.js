@@ -1,11 +1,46 @@
 const playdl = require('play-dl');
 const log = require('./logger');
 
+function pickFirst(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) return value.trim();
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return null;
+}
+
+function normalizeSearchTrack(found, requestedBy) {
+    const title = pickFirst(found?.title, found?.name, found?.id, 'Unknown Title');
+    const author = pickFirst(
+        found?.channel?.name,
+        found?.user?.name,
+        found?.uploader?.name,
+        found?.uploader,
+        'Unknown Artist'
+    );
+    const duration = found?.durationInSec || 0;
+    const thumbnail = pickFirst(
+        found?.thumbnails?.[0]?.url,
+        found?.thumbnail?.url,
+        found?.thumbnail
+    );
+
+    return {
+        title,
+        url: found?.url,
+        author,
+        duration,
+        thumbnail: thumbnail || null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+    };
+}
+
 function videoDetailsToTrack(details, requestedBy) {
     return {
-        title: details.title || 'Unknown Title',
+        title: details.title || details.id || 'Unknown Title',
         url: details.url || `https://www.youtube.com/watch?v=${details.id}`,
-        author: details.channel?.name || details.channel?.url || details.channel || 'Unknown',
+        author: details.channel?.name || details.channel?.url || details.channel || 'Unknown Artist',
         duration: details.durationInSec || 0,
         thumbnail: details.thumbnails?.[0]?.url || details.thumbnail?.url || null,
         requestedBy: requestedBy || null,
@@ -61,15 +96,7 @@ async function resolve(input, requestedBy) {
         log.info('resolver', 'Selected YouTube result:', found.url);
     }
 
-    return [{
-        title: found.title || 'Unknown',
-        url: found.url,
-        author: found.channel?.name || found.user?.name || 'Unknown',
-        duration: found.durationInSec || 0,
-        thumbnail: found.thumbnails?.[0]?.url || found.thumbnail || null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-    }];
+    return [normalizeSearchTrack(found, requestedBy)];
 }
 
 module.exports = { resolve };
