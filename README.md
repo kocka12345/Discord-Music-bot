@@ -165,6 +165,7 @@ Use one of these env vars:
 Backward compatibility:
 
 - `YTDLP_COOKIES_B64` and `YTDLP_COOKIES` are still accepted and mapped to play-dl token loading.
+- On startup, the bot also initializes a free SoundCloud client ID for search/stream fallback.
 
 ---
 

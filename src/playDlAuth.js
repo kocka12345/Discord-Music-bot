@@ -62,17 +62,30 @@ function getYoutubeCookieHeaderFromEnv() {
   return null;
 }
 
-function initPlayDlAuth() {
+async function initSoundCloudToken() {
+  try {
+    const clientId = await playdl.getFreeClientID();
+    await playdl.setToken({
+      soundcloud: { client_id: clientId },
+    });
+    log.info('play-dl-auth', 'SoundCloud client ID loaded into play-dl token store.');
+  } catch (err) {
+    log.warn('play-dl-auth', `Failed to initialize SoundCloud token: ${err.message}`);
+  }
+}
+
+async function initPlayDlAuth() {
   const cookie = getYoutubeCookieHeaderFromEnv();
   if (!cookie) {
     log.warn('play-dl-auth', 'No YouTube cookie configured for play-dl.');
-    return;
+  } else {
+    playdl.setToken({
+      youtube: { cookie },
+    });
+    log.info('play-dl-auth', 'YouTube cookie loaded into play-dl token store.');
   }
 
-  playdl.setToken({
-    youtube: { cookie },
-  });
-  log.info('play-dl-auth', 'YouTube cookie loaded into play-dl token store.');
+  await initSoundCloudToken();
 }
 
 module.exports = { initPlayDlAuth };
