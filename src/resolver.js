@@ -83,34 +83,72 @@ function isYouTubeUrl(url) {
     return /(?:youtube\.com|youtu\.be)/i.test(url || '');
 }
 
+function extractYouTubeId(url) {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') {
+            return parsed.pathname.replace('/', '').trim() || null;
+        }
+        if (host === 'youtube.com' || host === 'm.youtube.com') {
+            if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/live/')) {
+                const id = parsed.pathname.split('/').pop();
+                return id || null;
+            }
+        }
+    } catch {}
+    return null;
+}
+
+async function fetchYouTubeBasicMeta(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    try {
+        const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+        const res = await fetch(endpoint, { signal: controller.signal });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return {
+            title: data?.title || null,
+            author: data?.author_name || null,
+            thumbnail: data?.thumbnail_url || null,
+        };
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 async function resolveYouTubeUrlViaSoundCloud(url, requestedBy) {
-    const info = await playdl.video_basic_info(url).catch(err => {
-        throw new Error(err.message || 'Failed to fetch YouTube metadata');
-    });
-
-    const details = info?.video_details;
-    if (!details) throw new Error('Failed to read YouTube video details');
-
-    const ytTrack = videoDetailsToTrack(details, requestedBy);
-    const query = [details.title, details.channel?.name].filter(Boolean).join(' ').trim();
-    if (!query) return [ytTrack];
+    const meta = await fetchYouTubeBasicMeta(url);
+    const videoId = extractYouTubeId(url);
+    const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
+    if (!query) {
+        throw new Error('Could not read YouTube title for SoundCloud lookup.');
+    }
 
     const scResults = await playdl.search(query, {
         source: { soundcloud: 'tracks' },
         limit: 1,
     }).catch(() => []);
 
-    if (!scResults.length) return [ytTrack];
+    if (!scResults.length) {
+        throw new Error('No SoundCloud match found for this YouTube link.');
+    }
 
     const sc = normalizeSearchTrack(scResults[0], requestedBy);
     return [{
-        ...ytTrack,
-        streamUrl: sc.url || ytTrack.url,
-        title: ytTrack.title || sc.title,
-        author: sc.author || ytTrack.author,
-        duration: sc.duration || ytTrack.duration,
-        thumbnail: sc.thumbnail || ytTrack.thumbnail,
-        album: sc.album || ytTrack.album || null,
+        title: meta?.title || sc.title || 'Unknown Title',
+        url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : url,
+        streamUrl: sc.url,
+        author: sc.author || meta?.author || 'Unknown Artist',
+        duration: sc.duration || 0,
+        thumbnail: sc.thumbnail || meta?.thumbnail || null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+        album: null,
         source: 'soundcloud-from-youtube',
     }];
 }
