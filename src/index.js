@@ -126,6 +126,11 @@ client.on('error', err => {
 });
 
 process.on('unhandledRejection', reason => {
+  const message = String(reason?.message || reason || '');
+  if (message.includes('Got 429 from the request')) {
+    log.warn('process', 'play-dl received a 429 rate-limit from provider.');
+    return;
+  }
   log.error('process', 'unhandledRejection:', reason);
 });
 

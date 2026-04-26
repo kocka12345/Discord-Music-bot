@@ -44,16 +44,29 @@ async function resolve(input, requestedBy) {
         return resolveUrl(trimmed, requestedBy);
     }
 
-    log.info('resolver', 'Searching via play-dl:', trimmed);
-    const results = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 });
-    if (!results.length) throw new Error('No results found for: ' + trimmed);
-    const found = results[0];
+    log.info('resolver', 'Searching via play-dl (SoundCloud first):', trimmed);
+
+    let found = null;
+
+    // Prefer SoundCloud on cloud hosts to avoid frequent YouTube 429 limits.
+    const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
+        .catch(() => []);
+    if (scResults.length) {
+        found = scResults[0];
+        log.info('resolver', 'Selected SoundCloud result:', found.url);
+    } else {
+        const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 });
+        if (!ytResults.length) throw new Error('No results found for: ' + trimmed);
+        found = ytResults[0];
+        log.info('resolver', 'Selected YouTube result:', found.url);
+    }
+
     return [{
         title: found.title || 'Unknown',
         url: found.url,
-        author: found.channel?.name || 'Unknown',
+        author: found.channel?.name || found.user?.name || 'Unknown',
         duration: found.durationInSec || 0,
-        thumbnail: found.thumbnails?.[0]?.url || null,
+        thumbnail: found.thumbnails?.[0]?.url || found.thumbnail || null,
         requestedBy: requestedBy || null,
         lyrics: null,
     }];
