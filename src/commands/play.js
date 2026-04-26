@@ -8,6 +8,12 @@ const GuildQueue = require('../GuildQueue');
 const { resolve } = require('../resolver');
 const log = require('../logger');
 
+const PLAY_COOLDOWN_MS = 1500;
+
+function isInteractionAckError(err) {
+  return err?.code === 10062 || err?.code === 40060;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('play')
@@ -20,13 +26,64 @@ module.exports = {
 
   async execute(interaction, client) {
     log.debug('play', `Received /play from ${interaction.user.id}`);
-    await interaction.deferReply({ ephemeral: true });
+    client._playCooldowns = client._playCooldowns || new Map();
+    client._playInFlightGuilds = client._playInFlightGuilds || new Set();
+
+    const cooldownKey = `${interaction.guildId}:${interaction.user.id}`;
+    const now = Date.now();
+    const lastCall = client._playCooldowns.get(cooldownKey) || 0;
+    const remainingMs = PLAY_COOLDOWN_MS - (now - lastCall);
+    if (remainingMs > 0) {
+      const waitSec = (remainingMs / 1000).toFixed(1);
+      await interaction.reply({
+        content: `⏳ Slow down a bit. Try /play again in ${waitSec}s.`,
+        ephemeral: true,
+      }).catch(() => {});
+      return;
+    }
+    client._playCooldowns.set(cooldownKey, now);
+
+    if (client._playInFlightGuilds.has(interaction.guildId)) {
+      await interaction.reply({
+        content: '⏳ Another /play request is processing right now. Try again in a moment.',
+        ephemeral: true,
+      }).catch(() => {});
+      return;
+    }
+    client._playInFlightGuilds.add(interaction.guildId);
+
+    try {
+    let canUseInteractionReply = true;
+    try {
+      await interaction.deferReply({ ephemeral: true });
+    } catch (err) {
+      if (isInteractionAckError(err)) {
+        canUseInteractionReply = false;
+        log.warn('play', `Interaction ack failed (${err.code}), continuing without interaction reply.`);
+      } else {
+        throw err;
+      }
+    }
+
+    const replySafe = async content => {
+      if (canUseInteractionReply) {
+        try {
+          await interaction.editReply(content);
+          return;
+        } catch (err) {
+          if (!isInteractionAckError(err)) throw err;
+          canUseInteractionReply = false;
+          log.warn('play', `Interaction reply failed (${err.code}), falling back to channel message.`);
+        }
+      }
+      await interaction.channel?.send(typeof content === 'string' ? content : String(content)).catch(() => {});
+    };
 
     const member = interaction.member;
     const voiceChannel = member.voice?.channel;
 
     if (!voiceChannel) {
-      return interaction.editReply('❌ You need to be in a voice channel first!');
+      return replySafe('❌ You need to be in a voice channel first!');
     }
 
     const query = interaction.options.getString('query');
@@ -38,7 +95,7 @@ module.exports = {
       log.info('play', `Resolved ${tracks.length} track(s) for query: ${query}`);
     } catch (err) {
       log.warn('play', `Resolve failed for query "${query}": ${err.message}`);
-      return interaction.editReply(`❌ Could not find: **${query}**\n${err.message}`);
+      return replySafe(`❌ Could not find: **${query}**\n${err.message}`);
     }
 
     // Check blocked songs
@@ -50,7 +107,7 @@ module.exports = {
     });
 
     if (allowed.length === 0) {
-      return interaction.editReply('🚫 That song/playlist is blocked on this server.');
+      return replySafe('🚫 That song/playlist is blocked on this server.');
     }
     tracks = allowed;
 
@@ -71,7 +128,7 @@ module.exports = {
       } catch {
         connection.destroy();
         log.error('voice', `Failed to connect to voice channel ${voiceChannel.id}`);
-        return interaction.editReply('❌ Failed to join voice channel.');
+        return replySafe('❌ Failed to join voice channel.');
       }
 
       queue = new GuildQueue(connection, interaction.channel);
@@ -94,16 +151,19 @@ module.exports = {
         log.error('play', 'Failed to start playback:', err.message);
       });
       if (tracks.length === 1) {
-        await interaction.editReply(`🎵 Starting **${tracks[0].title}**`);
+        await replySafe(`🎵 Starting **${tracks[0].title}**`);
       } else {
-        await interaction.editReply(`🎵 Starting playlist — **${tracks.length} tracks** added`);
+        await replySafe(`🎵 Starting playlist — **${tracks.length} tracks** added`);
       }
     } else {
       if (tracks.length === 1) {
-        await interaction.editReply(`✅ Added to queue: **${tracks[0].title}**`);
+        await replySafe(`✅ Added to queue: **${tracks[0].title}**`);
       } else {
-        await interaction.editReply(`✅ Added **${tracks.length} tracks** from playlist to queue`);
+        await replySafe(`✅ Added **${tracks.length} tracks** from playlist to queue`);
       }
+    }
+    } finally {
+      client._playInFlightGuilds.delete(interaction.guildId);
     }
   },
 };

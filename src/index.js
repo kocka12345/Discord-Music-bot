@@ -132,6 +132,10 @@ client.on('interactionCreate', async interaction => {
   try {
     await command.execute(interaction, client);
   } catch (err) {
+    if (err?.code === 10062 || err?.code === 40060) {
+      log.warn('interaction', `Command interaction expired/already acknowledged (${err.code}) for /${interaction.commandName}`);
+      return;
+    }
     log.error('command', `Error in /${interaction.commandName}:`, err);
     await safeInteractionErrorReply(interaction);
   }
