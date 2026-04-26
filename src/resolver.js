@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const playdl = require('play-dl');
 const { getYtDlpAuthArgs, getYtDlpAuthDebugInfo } = require('./ytDlpConfig');
+const log = require('./logger');
 
 let authLogged = false;
 
@@ -10,7 +11,8 @@ function logAuthInfoOnce(context) {
     if (authLogged) return;
     authLogged = true;
     const info = getYtDlpAuthDebugInfo();
-    console.log(
+    log.info(
+        'yt-dlp-auth',
         `[yt-dlp auth][${context}] hasCookies=${info.hasCookies} source=${info.cookiesSource} ` +
         `cookiesPath=${info.cookiesPath || 'none'} extractorArgs=${info.hasExtractorArgs}`
     );
@@ -41,7 +43,8 @@ function ytDlpInfo(url) {
         const ytdlp = getYtDlpPath();
         const authArgs = getYtDlpAuthArgs();
         logAuthInfoOnce('metadata');
-        console.log('[resolver] Using binary:', ytdlp);
+        log.info('resolver', 'Using binary:', ytdlp);
+        log.debug('resolver', 'Metadata auth args:', authArgs);
         
         execFile(ytdlp, [
             '--dump-json',
@@ -52,7 +55,7 @@ function ytDlpInfo(url) {
             url,
         ], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) {
-                console.error('[resolver] yt-dlp error:', stderr || err.message);
+                log.error('resolver', 'yt-dlp error:', stderr || err.message);
                 return reject(new Error(stderr || err.message));
             }
             try { 
@@ -81,13 +84,13 @@ async function resolve(input, requestedBy) {
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
     if (isUrl) {
-        console.log('[resolver] URL detected, fetching metadata...');
+        log.info('resolver', 'URL detected, fetching metadata...');
         const info = await ytDlpInfo(trimmed);
         return [infoToTrack(info, requestedBy)];
     }
 
     // Search query
-    console.log('[resolver] Searching:', trimmed);
+    log.info('resolver', 'Searching:', trimmed);
     const results = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 });
     if (!results.length) throw new Error('No results found for: ' + trimmed);
     const found = results[0];

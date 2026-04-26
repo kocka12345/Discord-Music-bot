@@ -6,6 +6,7 @@ const {
 } = require('@discordjs/voice');
 const GuildQueue = require('../GuildQueue');
 const { resolve } = require('../resolver');
+const log = require('../logger');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -18,6 +19,7 @@ module.exports = {
     ),
 
   async execute(interaction, client) {
+    log.debug('play', `Received /play from ${interaction.user.id}`);
     await interaction.deferReply({ ephemeral: true });
 
     const member = interaction.member;
@@ -33,7 +35,9 @@ module.exports = {
     let tracks;
     try {
       tracks = await resolve(query, interaction.user.id);
+      log.info('play', `Resolved ${tracks.length} track(s) for query: ${query}`);
     } catch (err) {
+      log.warn('play', `Resolve failed for query "${query}": ${err.message}`);
       return interaction.editReply(`❌ Could not find: **${query}**\n${err.message}`);
     }
 
@@ -63,8 +67,10 @@ module.exports = {
 
       try {
         await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+        log.info('voice', `Connected to voice channel ${voiceChannel.id}`);
       } catch {
         connection.destroy();
+        log.error('voice', `Failed to connect to voice channel ${voiceChannel.id}`);
         return interaction.editReply('❌ Failed to join voice channel.');
       }
 
