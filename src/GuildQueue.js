@@ -51,7 +51,9 @@ function createYtDlpStream(url) {
   console.log(`[resolver] Using binary for streaming: ${ytdlp}`); // Změněno na [resolver] pro kontrolu
   console.log(`[yt-dlp] Streaming: ${url}`);
   const proc = spawn(ytdlp, [
-    '-f', 'bestaudio/best',
+    // Be permissive: some YouTube responses on cloud hosts expose
+    // limited format sets depending on client/extractor args.
+    '-f', 'ba/bestaudio/best',
     '--no-playlist',
     '-o', '-',
     '--quiet',
