@@ -107,6 +107,7 @@ class GuildQueue {
     this._precacheTimer = null;
     this._preloadedNext = null;
     this._lastNowPlayingMessage = null;
+    this._lyricMessages = [];
     this.lyricsEnabled = true;
 
     this.connection.subscribe(this.player);
@@ -136,6 +137,7 @@ class GuildQueue {
 
   async playNext() {
     this._clearPrecache();
+    this._clearLyricsMessages();
 
     if (this.tracks.length === 0) {
       this.currentTrack = null;
@@ -187,6 +189,7 @@ class GuildQueue {
     this._clearPrecache();
     this._deleteLastNowPlayingMessage();
     this._stopLyricsDisplay();
+    this._clearLyricsMessages();
     if (this.currentTrack) {
       this.history.push(this.currentTrack);
       if (this.history.length > HISTORY_LIMIT) this.history.shift();
@@ -222,6 +225,7 @@ class GuildQueue {
   stop() {
     this._clearPrecache();
     this._deleteLastNowPlayingMessage();
+    this._clearLyricsMessages();
     this.tracks = [];
     this.history = [];
     this.currentTrack = null;
@@ -313,7 +317,7 @@ class GuildQueue {
     const lyrics = this.currentTrack?.lyrics;
     if (!lyrics || this._lyricsIndex >= lyrics.length) return;
     const line = lyrics[this._lyricsIndex++];
-    if (line.text?.trim()) this._sendLyricsToQueueChannel(`🎵 ${this._lyricsPrefix()} *${line.text}*`);
+    if (line.text?.trim()) this._sendLyricsToQueueChannel(`🎵 *${line.text}*`);
     const nextLine = lyrics[this._lyricsIndex];
     if (nextLine) {
       const delay = Math.max(0, (nextLine.time - line.time) * 1000);
@@ -347,15 +351,47 @@ class GuildQueue {
     this._lastNowPlayingMessage = null;
   }
 
-  _lyricsPrefix() {
-    const userId = this.currentTrack?.requestedBy;
-    return userId ? `<@${userId}>` : '';
+  _clearLyricsMessages() {
+    if (!this._lyricMessages.length) return;
+    for (const msg of this._lyricMessages) {
+      msg.delete().catch(() => {});
+    }
+    this._lyricMessages = [];
+  }
+
+  _resolveLyricsChannel() {
+    const guild = this.textChannel?.guild;
+    if (!guild) return this.textChannel;
+
+    const voiceChannelId = this.connection?.joinConfig?.channelId;
+    const voiceChannel = voiceChannelId ? guild.channels.cache.get(voiceChannelId) : null;
+    const voiceName = voiceChannel?.name?.trim().toLowerCase();
+
+    if (voiceName) {
+      const sameNameText = guild.channels.cache.find(ch =>
+        typeof ch?.isTextBased === 'function' &&
+        ch.isTextBased() &&
+        ch.name?.trim().toLowerCase() === voiceName &&
+        typeof ch.send === 'function'
+      );
+      if (sameNameText) return sameNameText;
+    }
+
+    const generalText = guild.channels.cache.find(ch =>
+      typeof ch?.isTextBased === 'function' &&
+      ch.isTextBased() &&
+      ch.name?.trim().toLowerCase() === 'general' &&
+      typeof ch.send === 'function'
+    );
+    return generalText || this.textChannel;
   }
 
   async _sendLyricsToQueueChannel(content) {
     const userId = this.currentTrack?.requestedBy;
+    const channel = this._resolveLyricsChannel();
     try {
-      await this.textChannel.send(content);
+      const msg = await channel.send(content);
+      this._lyricMessages.push(msg);
     } catch (err) {
       log.warn('lyrics', `Could not post lyrics to text channel for user ${userId || 'unknown'}: ${err.message}`);
     }
