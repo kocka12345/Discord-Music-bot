@@ -67,11 +67,8 @@ function loadPlaylists() {
 function savePlaylists(data) {
   fs.writeFileSync(playlistFile, JSON.stringify(data, null, 2));
 }
-function ensureUserPlaylists(all, userId, username) {
+function ensureUserPlaylists(all, userId) {
   if (!all[userId]) all[userId] = {};
-  if (!all[userId][username]) {
-    all[userId][username] = { public: false, tracks: [] };
-  }
   return all[userId];
 }
 function normalizePlaylist(pl) {
@@ -109,13 +106,21 @@ client.on('interactionCreate', async interaction => {
 
     const trackUrl = interaction.customId.slice('add_to_playlist:'.length);
     const userId = interaction.user.id;
-    const username = interaction.user.username;
 
     const all = loadPlaylists();
-    const playlists = ensureUserPlaylists(all, userId, username);
+    const playlists = ensureUserPlaylists(all, userId);
     savePlaylists(all);
+    const playlistEntries = Object.entries(playlists);
 
-    const options = Object.entries(playlists).map(([n, pl]) => {
+    if (playlistEntries.length === 0) {
+      await interaction.editReply({
+        content: 'You have no playlists yet. Create one with `/playlist create` first.',
+        components: [],
+      });
+      return;
+    }
+
+    const options = playlistEntries.map(([n, pl]) => {
       const norm = normalizePlaylist(pl);
       return {
         label: n,
@@ -270,10 +275,9 @@ client.on('interactionCreate', async interaction => {
   const trackUrl = interaction.customId.slice('playlist_select:'.length);
   const playlistName = interaction.values[0];
   const userId = interaction.user.id;
-  const username = interaction.user.username;
 
   const all = loadPlaylists();
-  const playlists = ensureUserPlaylists(all, userId, username);
+  const playlists = ensureUserPlaylists(all, userId);
 
   if (!playlists[playlistName]) {
     return interaction.editReply({ content: `Playlist **${playlistName}** not found.`, components: [] });

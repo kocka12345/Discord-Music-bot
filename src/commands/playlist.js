@@ -27,6 +27,15 @@ function saveUserPlaylists(client, userId, playlists) {
   savePlaylists(client, all);
 }
 
+function normalizePlaylist(playlist) {
+  if (Array.isArray(playlist)) return { public: false, tracks: playlist };
+  if (!playlist || typeof playlist !== 'object') return { public: false, tracks: [] };
+  return {
+    public: Boolean(playlist.public),
+    tracks: Array.isArray(playlist.tracks) ? playlist.tracks : [],
+  };
+}
+
 // ── /playlist create ───────────────────────────────────────────────────────
 
 const playlistCmd = {
@@ -81,7 +90,7 @@ const playlistCmd = {
     if (sub === 'create') {
       const name = interaction.options.getString('name');
       if (playlists[name]) return interaction.reply({ content: `❌ Playlist **${name}** already exists.`, ephemeral: true });
-      playlists[name] = [];
+      playlists[name] = { public: false, tracks: [] };
       saveUserPlaylists(client, userId, playlists);
       return interaction.reply(`✅ Created playlist **${name}**. Add songs with \`/playlist add name:${name} url:<link>\`.`);
     }
@@ -102,7 +111,9 @@ const playlistCmd = {
         return interaction.editReply(`❌ Could not resolve: ${err.message}`);
       }
 
-      playlists[name].push(...tracks.map(t => ({ title: t.title, url: t.url, author: t.author, duration: t.duration })));
+      const playlist = normalizePlaylist(playlists[name]);
+      playlist.tracks.push(...tracks.map(t => ({ title: t.title, url: t.url, author: t.author, duration: t.duration })));
+      playlists[name] = playlist;
       saveUserPlaylists(client, userId, playlists);
 
       return interaction.editReply(
@@ -116,12 +127,14 @@ const playlistCmd = {
     if (sub === 'remove') {
       const name = interaction.options.getString('name');
       if (!playlists[name]) return interaction.reply({ content: `❌ Playlist **${name}** not found.`, ephemeral: true });
+      const playlist = normalizePlaylist(playlists[name]);
 
       const pos = interaction.options.getInteger('position') - 1;
-      if (pos < 0 || pos >= playlists[name].length) {
+      if (pos < 0 || pos >= playlist.tracks.length) {
         return interaction.reply({ content: '❌ Invalid position.', ephemeral: true });
       }
-      const [removed] = playlists[name].splice(pos, 1);
+      const [removed] = playlist.tracks.splice(pos, 1);
+      playlists[name] = playlist;
       saveUserPlaylists(client, userId, playlists);
       return interaction.reply(`🗑️ Removed **${removed.title}** from **${name}**`);
     }
@@ -133,13 +146,16 @@ const playlistCmd = {
       if (!name) {
         const names = Object.keys(playlists);
         if (names.length === 0) return interaction.reply({ content: '📭 You have no playlists yet. Create one with `/playlist create`.', ephemeral: true });
-        const lines = names.map(n => `• **${n}** — ${playlists[n].length} track(s)`);
+        const lines = names.map(n => {
+          const playlist = normalizePlaylist(playlists[n]);
+          return `• **${n}** — ${playlist.tracks.length} track(s)`;
+        });
         return interaction.reply(`🎧 **Your playlists:**\n${lines.join('\n')}`);
       }
 
       if (!playlists[name]) return interaction.reply({ content: `❌ Playlist **${name}** not found.`, ephemeral: true });
 
-      const tracks = playlists[name];
+      const tracks = normalizePlaylist(playlists[name]).tracks;
       if (tracks.length === 0) return interaction.reply(`📭 **${name}** is empty.`);
 
       const lines = tracks.map((t, i) => `\`${i + 1}.\` ${t.title} — \`${fmt(t.duration)}\``);
@@ -151,7 +167,7 @@ const playlistCmd = {
       const name = interaction.options.getString('name');
       if (!playlists[name]) return interaction.reply({ content: `❌ Playlist **${name}** not found.`, ephemeral: true });
 
-      const tracks = playlists[name];
+      const tracks = normalizePlaylist(playlists[name]).tracks;
       if (tracks.length === 0) return interaction.reply({ content: `📭 **${name}** is empty.`, ephemeral: true });
 
       // Use /play logic inline
