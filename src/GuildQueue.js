@@ -5,7 +5,7 @@ const {
   VoiceConnectionStatus,
   entersState,
 } = require('@discordjs/voice');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const playdl = require('play-dl');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -150,6 +150,10 @@ class GuildQueue {
     this._resource = null;
     this._lyricsInterval = null;
     this._cachedFilePath = null;
+    this._trackStartedAt = 0;
+    this._pausedAt = 0;
+    this._pausedAccumulatedMs = 0;
+    this.lyricsEnabled = true;
 
     this.connection.subscribe(this.player);
 
@@ -194,12 +198,15 @@ class GuildQueue {
       });
       this._resource.volume.setVolume(this.volume);
       this.player.play(this._resource);
+      this._trackStartedAt = Date.now();
+      this._pausedAt = 0;
+      this._pausedAccumulatedMs = 0;
 
       this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
       if (this.currentTrack.source === 'soundcloud-fallback') {
         this.textChannel.send('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
       }
-      this._startLyricsDisplay();
+      this._startLyricsDisplay(0);
     } catch (err) {
       log.error('stream', 'Primary stream error:', err.message);
 
@@ -212,7 +219,7 @@ class GuildQueue {
           this.player.play(this._resource);
           this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
           this.textChannel.send('ℹ️ Using temporary cached playback fallback.');
-          this._startLyricsDisplay();
+          this._startLyricsDisplay(0);
           return;
         } catch (fallbackErr) {
           log.error('stream', 'yt-dlp cache fallback failed:', fallbackErr.message);
@@ -250,8 +257,17 @@ class GuildQueue {
   }
 
   skip() { this._stopLyricsDisplay(); this.player.stop(true); }
-  pause() { this.player.pause(); }
-  resume() { this.player.unpause(); }
+  pause() {
+    if (!this._pausedAt) this._pausedAt = Date.now();
+    this.player.pause();
+  }
+  resume() {
+    if (this._pausedAt) {
+      this._pausedAccumulatedMs += Date.now() - this._pausedAt;
+      this._pausedAt = 0;
+    }
+    this.player.unpause();
+  }
 
   setVolume(vol) {
     this.volume = vol / 100;
@@ -283,11 +299,15 @@ class GuildQueue {
     }
   }
 
-  _startLyricsDisplay() {
+  _startLyricsDisplay(startOffsetSec = 0) {
     this._stopLyricsDisplay();
-    if (!this.currentTrack?.lyrics?.length) return;
-    this._lyricsIndex = 0;
-    this._postNextLyricLine();
+    if (!this.currentTrack?.lyrics?.length || !this.lyricsEnabled) return;
+    const lyrics = this.currentTrack.lyrics;
+    const idx = lyrics.findIndex(line => line.time >= startOffsetSec);
+    if (idx === -1) return;
+    this._lyricsIndex = idx;
+    const initialDelay = Math.max(0, Math.round((lyrics[idx].time - startOffsetSec) * 1000));
+    this._lyricsInterval = setTimeout(() => this._postNextLyricLine(), initialDelay);
   }
 
   _stopLyricsDisplay() {
@@ -301,20 +321,24 @@ class GuildQueue {
     if (line.text?.trim()) this.textChannel.send(`🎵 *${line.text}*`).catch(() => {});
     const nextLine = lyrics[this._lyricsIndex];
     if (nextLine) {
-      const delay = (nextLine.time - line.time) * 1000;
+      const delay = Math.max(0, (nextLine.time - line.time) * 1000);
       this._lyricsInterval = setTimeout(() => this._postNextLyricLine(), delay);
     }
   }
 
   _nowPlayingEmbed(track) {
     const showLink = isYouTubeUrl(track.url);
-    const content = [
-      `▶️  **Now Playing**`,
-      `**${track.title}**`,
-      `👤 ${track.author}  •  ⏱️ ${this._formatDuration(track.duration)}`,
-      showLink ? `🔗 ${track.url}` : '',
-      track.requestedBy ? `Requested by <@${track.requestedBy}>` : '',
-    ].filter(Boolean).join('\n');
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`▶️ Now Playing`)
+      .setDescription([
+        `**${track.title}**`,
+        `👤 ${track.author}  •  ⏱️ ${this._formatDuration(track.duration)}`,
+        track.requestedBy ? `Requested by <@${track.requestedBy}>` : '',
+      ].filter(Boolean).join('\n'));
+
+    if (showLink) embed.setURL(track.url);
+    if (track.thumbnail) embed.setThumbnail(track.thumbnail);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -323,7 +347,7 @@ class GuildQueue {
         .setStyle(ButtonStyle.Secondary)
     );
 
-    return { content, components: [row] };
+    return { embeds: [embed], components: [row] };
   }
 
   _formatDuration(seconds) {
@@ -335,6 +359,22 @@ class GuildQueue {
 
   isPlaying() { return this.player.state.status === AudioPlayerStatus.Playing; }
   isPaused() { return this.player.state.status === AudioPlayerStatus.Paused; }
+  getElapsedPlaybackSeconds() {
+    if (!this._trackStartedAt) return 0;
+    const inFlightPauseMs = this._pausedAt ? (Date.now() - this._pausedAt) : 0;
+    const elapsedMs = Date.now() - this._trackStartedAt - this._pausedAccumulatedMs - inFlightPauseMs;
+    return Math.max(0, Math.floor(elapsedMs / 1000));
+  }
+  setLyricsEnabled(enabled) {
+    this.lyricsEnabled = Boolean(enabled);
+    if (!this.lyricsEnabled) {
+      this._stopLyricsDisplay();
+      return;
+    }
+    if (this.currentTrack?.lyrics?.length) {
+      this._startLyricsDisplay(this.getElapsedPlaybackSeconds());
+    }
+  }
 }
 
 module.exports = GuildQueue;

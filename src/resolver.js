@@ -9,6 +9,25 @@ function pickFirst(...values) {
     return null;
 }
 
+function normalizeYouTubeUrl(url) {
+    if (!url) return url;
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') {
+            const id = parsed.pathname.replace('/', '').trim();
+            if (id) return `https://www.youtube.com/watch?v=${id}`;
+        }
+        if (host === 'youtube.com' || host === 'm.youtube.com') {
+            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/live/')) {
+                const id = parsed.pathname.split('/').pop();
+                if (id) return `https://www.youtube.com/watch?v=${id}`;
+            }
+        }
+    } catch {}
+    return url;
+}
+
 function normalizeSearchTrack(found, requestedBy) {
     const title = pickFirst(found?.title, found?.name, found?.id, 'Unknown Title');
     const author = pickFirst(
@@ -49,7 +68,8 @@ function videoDetailsToTrack(details, requestedBy) {
 }
 
 async function resolveUrl(url, requestedBy) {
-    const playlist = await playdl.playlist_info(url, { incomplete: true }).catch(() => null);
+    const normalizedUrl = normalizeYouTubeUrl(url);
+    const playlist = await playdl.playlist_info(normalizedUrl, { incomplete: true }).catch(() => null);
     if (playlist) {
         const videos = await playlist.all_videos();
         if (!videos?.length) throw new Error('Playlist is empty or unavailable.');
@@ -64,7 +84,7 @@ async function resolveUrl(url, requestedBy) {
         }));
     }
 
-    const info = await playdl.video_basic_info(url).catch(err => {
+    const info = await playdl.video_basic_info(normalizedUrl).catch(err => {
         throw new Error(err.message || 'Failed to fetch video info');
     });
     return [videoDetailsToTrack(info.video_details, requestedBy)];
