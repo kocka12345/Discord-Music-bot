@@ -60,15 +60,13 @@ Open the generated URL and add the bot to your server.
 
 ### 4. Configure Environment
 
-```bash
-cp .env.example .env
-```
+Create a `.env` file in the project root and add:
 
-Edit `.env`:
-```
+```env
 DISCORD_TOKEN=your_bot_token_here
 CLIENT_ID=your_application_client_id_here
-GUILD_ID=your_server_id_here   # optional, for instant command registration during dev
+GUILD_ID=your_server_id_here
+DEBUG_LOGS=false
 ```
 
 To get your Server ID (Guild ID): right-click your server icon → **Copy Server ID** (you need Developer Mode on in Discord settings).
@@ -137,27 +135,35 @@ discord-music-bot/
 
 ---
 
-## 🌐 Render + yt-dlp auth (important)
+## 🌐 Render deployment notes
 
-If Render logs show:
+This version uses a **play-dl backend** for metadata + streaming and does not require shipping a `yt-dlp` binary.
 
-`Sign in to confirm you're not a bot`
+Recommended Render settings:
 
-you must provide YouTube auth data to `yt-dlp`.
+- Start command: `node src/index.js`
+- Build command: `npm install`
+- Environment variables:
+  - `DISCORD_TOKEN`
+  - `CLIENT_ID`
+  - `GUILD_ID` (optional, for fast guild command updates)
+  - `DEBUG_LOGS=true` (optional, enables verbose logs)
 
-Supported environment variables in this bot:
+If voice playback fails on Render, make sure your service can open UDP voice connections and your bot has `Connect` + `Speak` permissions in Discord.
 
-- `YTDLP_BIN` — `yt-dlp` executable path (Linux example: `/usr/bin/yt-dlp`)
-- `YTDLP_COOKIES_FILE` — absolute path to cookies file (Netscape format)
-- `YTDLP_COOKIES_B64` — base64 encoded cookies file content
-- `YTDLP_COOKIES` — raw cookies file content
-- `YTDLP_EXTRACTOR_ARGS` — optional extra extractor args passed to `yt-dlp`
+---
 
-Render-friendly setup:
+## 🧰 Backend architecture
 
-1. Export YouTube cookies in Netscape format from your browser.
-2. Convert to base64.
-3. Set `YTDLP_COOKIES_B64` in Render environment variables.
-4. Redeploy.
+- **Resolver backend:** `play-dl` (`src/resolver.js`)
+- **Stream backend:** `play-dl` stream source (`src/GuildQueue.js`)
+- **Voice output:** `@discordjs/voice`
 
-On startup, the bot writes that value to a temp file and runs `yt-dlp --cookies <tempfile> ...` for both metadata and streaming.
+---
+
+## 🙌 Credits
+
+- Discord framework: [discord.js](https://github.com/discordjs/discord.js)
+- Voice engine: [@discordjs/voice](https://github.com/discordjs/discord.js/tree/main/packages/voice)
+- Media resolver/streaming: [play-dl](https://github.com/play-dl/play-dl)
+- Lyrics API: [lyrics.ovh](https://lyrics.ovh)

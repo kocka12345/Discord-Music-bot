@@ -8,8 +8,6 @@ node_modules/
 __pycache__/
 *.pyc
 
-yt-dlp.exe
-
 ffmpeg.exe
 
 at vis co to je.txt

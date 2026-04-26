@@ -4,78 +4,17 @@ const {
   AudioPlayerStatus,
   VoiceConnectionStatus,
   entersState,
-  StreamType,
 } = require('@discordjs/voice');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const { getYtDlpAuthArgs, getYtDlpAuthDebugInfo } = require('./ytDlpConfig');
+const playdl = require('play-dl');
 const log = require('./logger');
 
-let authLogged = false;
-
-function logAuthInfoOnce(context) {
-  if (authLogged) return;
-  authLogged = true;
-  const info = getYtDlpAuthDebugInfo();
-  log.info(
-    'yt-dlp-auth',
-    `[yt-dlp auth][${context}] hasCookies=${info.hasCookies} source=${info.cookiesSource} ` +
-    `cookiesPath=${info.cookiesPath || 'none'} extractorArgs=${info.hasExtractorArgs}`
-  );
-}
-
-// Find yt-dlp binary - OPRAVENO PRO RENDER
-function getYtDlpPath() {
-  const envBin = process.env.YTDLP_BIN?.trim();
-  if (envBin) return envBin;
-
-  // 1. Cesta na Renderu (ve složce src, kam to stahujeme přes Build Command)
-  const renderPath = path.join(__dirname, 'yt-dlp');
-  if (fs.existsSync(renderPath)) return renderPath;
-
-  // 2. Cesta u tebe na Windows (o úroveň výš)
-  const rootWin = path.join(__dirname, '..', 'yt-dlp.exe');
-  if (fs.existsSync(rootWin)) return rootWin;
-
-  // 3. Fallback pro root projektu na Linuxu
-  const rootUnix = path.join(__dirname, '..', 'yt-dlp');
-  if (fs.existsSync(rootUnix)) return rootUnix;
-
-  return 'yt-dlp';
-}
-
-function createYtDlpStream(url) {
-  const ytdlp = getYtDlpPath();
-  const authArgs = getYtDlpAuthArgs();
-  logAuthInfoOnce('stream');
-  log.info('stream', `Using binary for streaming: ${ytdlp}`);
-  log.info('stream', `Streaming: ${url}`);
-  log.debug('stream', 'Spawn args:', [
-    '-f', '251/250/249/140/bestaudio/best',
-    '--no-playlist',
-    '-o', '-',
-    '--quiet',
-    '--no-warnings',
-    ...authArgs,
-    url,
-  ]);
-  const proc = spawn(ytdlp, [
-    // Explicit fallbacks: these audio formats are commonly available
-    // even when generic bestaudio selectors fail on cloud hosts.
-    '-f', '251/250/249/140/bestaudio/best',
-    '--no-playlist',
-    '-o', '-',
-    '--quiet',
-    '--no-warnings',
-    ...authArgs,
-    url,
-  ]);
-  proc.stderr.on('data', d => log.error('yt-dlp-stderr', d.toString().trim()));
-  proc.on('error', err => log.error('yt-dlp-spawn', err.message));
-  proc.on('close', code => log.info('stream', `yt-dlp exited with code ${code}`));
-  return proc.stdout;
+async function createPlayableStream(url) {
+  log.info('stream', `Creating play-dl stream: ${url}`);
+  const source = await playdl.stream(url, {
+    discordPlayerCompatibility: true,
+  });
+  return source;
 }
 
 class GuildQueue {
@@ -124,10 +63,10 @@ class GuildQueue {
     this.currentTrack = this.tracks.shift();
 
     try {
-      const stream = createYtDlpStream(this.currentTrack.url);
+      const source = await createPlayableStream(this.currentTrack.url);
 
-      this._resource = createAudioResource(stream, {
-        inputType: StreamType.Arbitrary,
+      this._resource = createAudioResource(source.stream, {
+        inputType: source.type,
         inlineVolume: true,
       });
       this._resource.volume.setVolume(this.volume);
