@@ -7,10 +7,6 @@ const {
 } = require('@discordjs/voice');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const playdl = require('play-dl');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const log = require('./logger');
 
 function isYouTubeUrl(url) {
@@ -48,61 +44,6 @@ async function createPlayableStream(url) {
     discordPlayerCompatibility: true,
   });
   return source;
-}
-
-function getYtDlpPath() {
-  const envBin = process.env.YTDLP_BIN?.trim();
-  if (envBin) return envBin;
-
-  const localWin = path.join(__dirname, '..', 'yt-dlp.exe');
-  if (fs.existsSync(localWin)) return localWin;
-
-  const localUnix = path.join(__dirname, '..', 'yt-dlp');
-  if (fs.existsSync(localUnix)) return localUnix;
-
-  return 'yt-dlp';
-}
-
-function maybeWriteCookiesFile() {
-  const b64 = process.env.YTDLP_COOKIES_B64?.trim();
-  const raw = process.env.YTDLP_COOKIES?.trim();
-  if (!b64 && !raw) return null;
-
-  const text = b64 ? Buffer.from(b64.replace(/\s+/g, ''), 'base64').toString('utf8') : raw;
-  if (!text?.trim()) return null;
-
-  const cookiesPath = path.join(os.tmpdir(), `yt-dlp-cookies-${process.pid}.txt`);
-  fs.writeFileSync(cookiesPath, text, 'utf8');
-  return cookiesPath;
-}
-
-async function downloadWithYtDlp(url) {
-  const ytdlp = getYtDlpPath();
-  const outputPath = path.join(os.tmpdir(), `discord-bot-cache-${Date.now()}.webm`);
-  const cookiesPath = maybeWriteCookiesFile();
-
-  const args = [
-    '-f', 'bestaudio/best',
-    '--no-playlist',
-    '--no-warnings',
-    '--quiet',
-    '-o', outputPath,
-  ];
-  if (cookiesPath) args.push('--cookies', cookiesPath);
-  args.push(url);
-
-  log.warn('stream', `Trying yt-dlp cache fallback with binary: ${ytdlp}`);
-
-  await new Promise((resolve, reject) => {
-    const proc = spawn(ytdlp, args);
-    proc.on('error', reject);
-    proc.on('close', code => {
-      if (code === 0) resolve();
-      else reject(new Error(`yt-dlp exited with code ${code}`));
-    });
-  });
-
-  return outputPath;
 }
 
 async function createPlayableSourceWithFallback(track) {
@@ -149,7 +90,6 @@ class GuildQueue {
     this.volume = 0.5;
     this._resource = null;
     this._lyricsInterval = null;
-    this._cachedFilePath = null;
     this._trackStartedAt = 0;
     this._pausedAt = 0;
     this._pausedAccumulatedMs = 0;
@@ -209,23 +149,6 @@ class GuildQueue {
       this._startLyricsDisplay(0);
     } catch (err) {
       log.error('stream', 'Primary stream error:', err.message);
-
-      if (isYouTubeUrl(this.currentTrack.url)) {
-        try {
-          const cachedPath = await downloadWithYtDlp(this.currentTrack.url);
-          this._cachedFilePath = cachedPath;
-          this._resource = createAudioResource(cachedPath, { inlineVolume: true });
-          this._resource.volume.setVolume(this.volume);
-          this.player.play(this._resource);
-          this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
-          this.textChannel.send('ℹ️ Using temporary cached playback fallback.');
-          this._startLyricsDisplay(0);
-          return;
-        } catch (fallbackErr) {
-          log.error('stream', 'yt-dlp cache fallback failed:', fallbackErr.message);
-        }
-      }
-
       this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
       this.playNext().catch(nextErr => {
         log.error('stream', 'Failed to continue queue after stream error:', nextErr.message);
@@ -234,17 +157,6 @@ class GuildQueue {
   }
 
   _onTrackEnd() {
-    if (this._cachedFilePath) {
-      const toDelete = this._cachedFilePath;
-      this._cachedFilePath = null;
-      setTimeout(() => {
-        fs.unlink(toDelete, err => {
-          if (err) log.warn('cache', `Failed to delete cache file: ${toDelete}`);
-          else log.info('cache', `Deleted cache file: ${toDelete}`);
-        });
-      }, 30_000);
-    }
-
     this._stopLyricsDisplay();
     if (this.loopMode === 'track' && this.currentTrack) {
       this.tracks.unshift(this.currentTrack);

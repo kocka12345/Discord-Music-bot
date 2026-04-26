@@ -1,5 +1,6 @@
 const playdl = require('play-dl');
 const log = require('./logger');
+const { getLavalinkConfig, resolveWithLavalink } = require('./lavalinkResolver');
 
 function pickFirst(...values) {
     for (const value of values) {
@@ -143,6 +144,16 @@ async function resolveUrl(url, requestedBy) {
 }
 
 async function resolve(input, requestedBy) {
+    const lavalinkConfig = getLavalinkConfig();
+    if (lavalinkConfig) {
+        try {
+            log.info('resolver', 'Resolving via Lavalink backend...');
+            return await resolveWithLavalink(input, requestedBy);
+        } catch (err) {
+            log.warn('resolver', `Lavalink resolve failed, using play-dl fallback: ${err.message}`);
+        }
+    }
+
     const trimmed = input.trim();
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 

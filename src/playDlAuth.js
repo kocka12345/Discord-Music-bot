@@ -45,20 +45,6 @@ function getYoutubeCookieHeaderFromEnv() {
     if (parsed) return parsed;
   }
 
-  // Backward-compatible with previous yt-dlp envs.
-  const legacyRaw = process.env.YTDLP_COOKIES?.trim();
-  if (legacyRaw) {
-    const parsed = cookieTextToHeader(legacyRaw);
-    if (parsed) return parsed;
-  }
-
-  const legacyB64 = process.env.YTDLP_COOKIES_B64?.trim();
-  if (legacyB64) {
-    const decoded = decodeBase64(legacyB64);
-    const parsed = cookieTextToHeader(decoded);
-    if (parsed) return parsed;
-  }
-
   return null;
 }
 

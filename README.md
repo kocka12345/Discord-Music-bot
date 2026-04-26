@@ -137,7 +137,7 @@ discord-music-bot/
 
 ## 🌐 Render deployment notes
 
-This version uses a **play-dl backend** for metadata + streaming and does not require shipping a `yt-dlp` binary.
+This version uses **Lavalink-first resolving** (with `play-dl` fallback) for metadata/search and does not require shipping a `yt-dlp` binary.
 
 Recommended Render settings:
 
@@ -148,6 +148,8 @@ Recommended Render settings:
   - `CLIENT_ID`
   - `GUILD_ID` (optional, for fast guild command updates)
   - `DEBUG_LOGS=true` (optional, enables verbose logs)
+  - `LAVALINK_URL` (recommended, e.g. `http://your-lavalink-host:2333`)
+  - `LAVALINK_PASSWORD` (recommended)
   - `PLAYDL_YOUTUBE_COOKIE_B64` (recommended for YouTube on cloud hosts)
 
 If voice playback fails on Render, make sure your service can open UDP voice connections and your bot has `Connect` + `Speak` permissions in Discord.
@@ -162,26 +164,13 @@ Use one of these env vars:
 - `PLAYDL_YOUTUBE_COOKIE` — cookie header string (`k1=v1; k2=v2; ...`)
 - `PLAYDL_YOUTUBE_COOKIE_B64` — base64 of a Netscape `cookies.txt` file (recommended)
 
-Backward compatibility:
-
-- `YTDLP_COOKIES_B64` and `YTDLP_COOKIES` are still accepted and mapped to play-dl token loading.
-- On startup, the bot also initializes a free SoundCloud client ID for search/stream fallback.
-
-### Last-resort cache fallback (optional)
-
-If direct stream + SoundCloud fallback both fail, the bot can try to download YouTube audio with `yt-dlp`,
-play from a temporary local cache file, and delete it 30 seconds after track end.
-
-To enable this reliably on Render:
-
-- Provide a `yt-dlp` binary and set `YTDLP_BIN` (for example `./src/yt-dlp`)
-- Keep `YTDLP_COOKIES_B64` (or `YTDLP_COOKIES`) configured for protected videos
+On startup, the bot also initializes a free SoundCloud client ID for search/stream fallback.
 
 ---
 
 ## 🧰 Backend architecture
 
-- **Resolver backend:** `play-dl` (`src/resolver.js`)
+- **Resolver backend:** Lavalink-first (`src/lavalinkResolver.js`), fallback to `play-dl` (`src/resolver.js`)
 - **Stream backend:** `play-dl` stream source (`src/GuildQueue.js`)
 - **Voice output:** `@discordjs/voice`
 - **Provider strategy:** text search prefers YouTube first (SoundCloud fallback)
