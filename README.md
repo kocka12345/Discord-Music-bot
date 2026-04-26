@@ -38,6 +38,7 @@ A full-featured Discord music bot that plays YouTube audio in voice channels, wi
   - Windows: `winget install ffmpeg` or download from gyan.dev
   - macOS: `brew install ffmpeg`
   - Linux: `sudo apt install ffmpeg`
+  - Note: Recommend using Render for hosting
 
 ### 2. Create a Discord Bot
 
