@@ -35,6 +35,7 @@ module.exports = {
             '`/queue [page]` — Show the queue',
             '`/nowplaying` — Show current track info',
             '`/lyrics [song] [artist]` — Fetch lyrics (also displays live in chat)',
+            '`/lyrics mode:<on|off>` — Toggle live lyrics display',
           ].join('\n'),
         },
         {

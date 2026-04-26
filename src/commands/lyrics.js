@@ -3,7 +3,15 @@ const { SlashCommandBuilder } = require('discord.js');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('lyrics')
-    .setDescription('Fetch lyrics for the current song or a specific song')
+    .setDescription('Fetch lyrics, or toggle live lyrics on/off')
+    .addStringOption(o =>
+      o.setName('mode')
+        .setDescription('Turn live lyrics on or off')
+        .addChoices(
+          { name: 'On', value: 'on' },
+          { name: 'Off', value: 'off' }
+        )
+    )
     .addStringOption(o =>
       o.setName('song').setDescription('Song name (leave blank to use current track)')
     )
@@ -15,6 +23,13 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const queue = client.queues.get(interaction.guildId);
+    const mode = interaction.options.getString('mode');
+    if (mode) {
+      if (!queue) return interaction.editReply('❌ Nothing is playing.');
+      queue.setLyricsEnabled(mode === 'on');
+      return interaction.editReply(`✅ Live lyrics are now **${mode === 'on' ? 'ON' : 'OFF'}**.`);
+    }
+
     let songQuery = interaction.options.getString('song');
     let artistQuery = interaction.options.getString('artist');
 
@@ -95,7 +110,8 @@ module.exports = {
         if (line.trim()) t += 3;
         return entry;
       });
-      queue._startLyricsDisplay(); // restart live display with new lyrics
+      // If lyrics are loaded mid-track, align display with current playback progress.
+      queue._startLyricsDisplay(queue.getElapsedPlaybackSeconds());
     }
 
     // Send full lyrics publicly to the channel so everyone can see

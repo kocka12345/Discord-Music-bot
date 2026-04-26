@@ -327,7 +327,20 @@ client.on('interactionCreate', async interaction => {
   try {
     tracks = await resolve(trackUrl, userId);
   } catch (err) {
-    return interaction.editReply({ content: `Could not resolve track: ${err.message}`, components: [] });
+    const queue = client.queues.get(interaction.guildId);
+    const now = queue?.currentTrack;
+    if (now && (now.url === trackUrl || now.streamUrl === trackUrl)) {
+      tracks = [{
+        title: now.title || 'Unknown Title',
+        url: now.url || trackUrl,
+        author: now.author || 'Unknown Artist',
+        duration: now.duration || 0,
+        requestedBy: userId,
+        lyrics: null,
+      }];
+    } else {
+      return interaction.editReply({ content: `Could not resolve track: ${err.message}`, components: [] });
+    }
   }
 
   const norm = normalizePlaylist(playlists[playlistName]);

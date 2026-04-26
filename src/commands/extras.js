@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 const nowplayingCmd = {
   data: new SlashCommandBuilder()
@@ -13,15 +13,19 @@ const nowplayingCmd = {
 
     const t = queue.currentTrack;
     const status = queue.isPlaying() ? '▶️ Playing' : '⏸️ Paused';
-    const lines = [
-      `${status} — **${t.title}**`,
-      `👤 ${t.author}  •  ⏱️ ${fmt(t.duration)}`,
-      t.requestedBy ? `Requested by <@${t.requestedBy}>` : '',
-      `🔗 ${t.url}`,
-    ].filter(Boolean);
+    const isYouTube = /(?:youtube\.com|youtu\.be)/i.test(t.url || '');
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`${status} — ${t.title}`)
+      .setDescription([
+        `👤 ${t.author}  •  ⏱️ ${fmt(t.duration)}`,
+        t.requestedBy ? `Requested by <@${t.requestedBy}>` : '',
+      ].filter(Boolean).join('\n'));
 
-    // Now Playing is public (not ephemeral), everyone should see it
-    await interaction.reply(lines.join('\n'));
+    if (t.thumbnail) embed.setThumbnail(t.thumbnail);
+    if (isYouTube) embed.setURL(t.url);
+
+    await interaction.reply({ embeds: [embed] });
   },
 };
 
