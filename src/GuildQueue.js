@@ -7,6 +7,10 @@ const {
 } = require('@discordjs/voice');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const playdl = require('play-dl');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const log = require('./logger');
 
 function isYouTubeUrl(url) {
@@ -22,6 +26,22 @@ async function trySoundCloudFallback(query) {
   return results[0];
 }
 
+async function buildSoundCloudFallbackQuery(track) {
+  if (isYouTubeUrl(track.url)) {
+    try {
+      const info = await playdl.video_basic_info(track.url);
+      const ytTitle = info?.video_details?.title?.trim();
+      const ytAuthor = info?.video_details?.channel?.name?.trim();
+      const ytQuery = [ytTitle, ytAuthor].filter(Boolean).join(' ');
+      if (ytQuery) return ytQuery;
+    } catch (err) {
+      log.warn('stream', `Failed to fetch YouTube metadata for fallback query: ${err.message}`);
+    }
+  }
+
+  return [track.title, track.author].filter(Boolean).join(' ');
+}
+
 async function createPlayableStream(url) {
   log.info('stream', `Creating play-dl stream: ${url}`);
   const source = await playdl.stream(url, {
@@ -30,9 +50,65 @@ async function createPlayableStream(url) {
   return source;
 }
 
+function getYtDlpPath() {
+  const envBin = process.env.YTDLP_BIN?.trim();
+  if (envBin) return envBin;
+
+  const localWin = path.join(__dirname, '..', 'yt-dlp.exe');
+  if (fs.existsSync(localWin)) return localWin;
+
+  const localUnix = path.join(__dirname, '..', 'yt-dlp');
+  if (fs.existsSync(localUnix)) return localUnix;
+
+  return 'yt-dlp';
+}
+
+function maybeWriteCookiesFile() {
+  const b64 = process.env.YTDLP_COOKIES_B64?.trim();
+  const raw = process.env.YTDLP_COOKIES?.trim();
+  if (!b64 && !raw) return null;
+
+  const text = b64 ? Buffer.from(b64.replace(/\s+/g, ''), 'base64').toString('utf8') : raw;
+  if (!text?.trim()) return null;
+
+  const cookiesPath = path.join(os.tmpdir(), `yt-dlp-cookies-${process.pid}.txt`);
+  fs.writeFileSync(cookiesPath, text, 'utf8');
+  return cookiesPath;
+}
+
+async function downloadWithYtDlp(url) {
+  const ytdlp = getYtDlpPath();
+  const outputPath = path.join(os.tmpdir(), `discord-bot-cache-${Date.now()}.webm`);
+  const cookiesPath = maybeWriteCookiesFile();
+
+  const args = [
+    '-f', 'bestaudio/best',
+    '--no-playlist',
+    '--no-warnings',
+    '--quiet',
+    '-o', outputPath,
+  ];
+  if (cookiesPath) args.push('--cookies', cookiesPath);
+  args.push(url);
+
+  log.warn('stream', `Trying yt-dlp cache fallback with binary: ${ytdlp}`);
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(ytdlp, args);
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`yt-dlp exited with code ${code}`));
+    });
+  });
+
+  return outputPath;
+}
+
 async function createPlayableSourceWithFallback(track) {
+  const streamTarget = track.streamUrl || track.url;
   try {
-    const source = await createPlayableStream(track.url);
+    const source = await createPlayableStream(streamTarget);
     return { source, activeTrack: track };
   } catch (err) {
     const message = String(err?.message || '');
@@ -41,21 +117,23 @@ async function createPlayableSourceWithFallback(track) {
 
     if (!shouldFallback) throw err;
 
-    const query = [track.title, track.author].filter(Boolean).join(' ');
+    const query = await buildSoundCloudFallbackQuery(track);
     log.warn('stream', `YouTube rate-limited, trying SoundCloud fallback for: ${query}`);
     const fallback = await trySoundCloudFallback(query);
     if (!fallback) throw err;
 
     const fallbackTrack = {
       ...track,
-      title: fallback.title || track.title,
-      url: fallback.url || track.url,
-      author: fallback.user?.name || fallback.channel?.name || track.author,
+      title: fallback.title || fallback.name || track.title,
+      // Keep original URL for display/playlist use, stream from fallback URL.
+      url: track.url,
+      streamUrl: fallback.url || track.url,
+      author: fallback.user?.name || fallback.channel?.name || fallback.uploader?.name || track.author,
       duration: fallback.durationInSec || track.duration,
-      thumbnail: fallback.thumbnail || track.thumbnail || null,
+      thumbnail: fallback.thumbnail?.url || fallback.thumbnail || track.thumbnail || null,
       source: 'soundcloud-fallback',
     };
-    const source = await createPlayableStream(fallbackTrack.url);
+    const source = await createPlayableStream(fallbackTrack.streamUrl);
     return { source, activeTrack: fallbackTrack };
   }
 }
@@ -71,6 +149,7 @@ class GuildQueue {
     this.volume = 0.5;
     this._resource = null;
     this._lyricsInterval = null;
+    this._cachedFilePath = null;
 
     this.connection.subscribe(this.player);
 
@@ -122,7 +201,24 @@ class GuildQueue {
       }
       this._startLyricsDisplay();
     } catch (err) {
-      log.error('stream', 'Stream error:', err.message);
+      log.error('stream', 'Primary stream error:', err.message);
+
+      if (isYouTubeUrl(this.currentTrack.url)) {
+        try {
+          const cachedPath = await downloadWithYtDlp(this.currentTrack.url);
+          this._cachedFilePath = cachedPath;
+          this._resource = createAudioResource(cachedPath, { inlineVolume: true });
+          this._resource.volume.setVolume(this.volume);
+          this.player.play(this._resource);
+          this.textChannel.send(this._nowPlayingEmbed(this.currentTrack));
+          this.textChannel.send('ℹ️ Using temporary cached playback fallback.');
+          this._startLyricsDisplay();
+          return;
+        } catch (fallbackErr) {
+          log.error('stream', 'yt-dlp cache fallback failed:', fallbackErr.message);
+        }
+      }
+
       this.textChannel.send(`⚠️ Could not play **${this.currentTrack.title}**. Skipping...`);
       this.playNext().catch(nextErr => {
         log.error('stream', 'Failed to continue queue after stream error:', nextErr.message);
@@ -131,6 +227,17 @@ class GuildQueue {
   }
 
   _onTrackEnd() {
+    if (this._cachedFilePath) {
+      const toDelete = this._cachedFilePath;
+      this._cachedFilePath = null;
+      setTimeout(() => {
+        fs.unlink(toDelete, err => {
+          if (err) log.warn('cache', `Failed to delete cache file: ${toDelete}`);
+          else log.info('cache', `Deleted cache file: ${toDelete}`);
+        });
+      }, 30_000);
+    }
+
     this._stopLyricsDisplay();
     if (this.loopMode === 'track' && this.currentTrack) {
       this.tracks.unshift(this.currentTrack);
@@ -200,11 +307,12 @@ class GuildQueue {
   }
 
   _nowPlayingEmbed(track) {
+    const showLink = isYouTubeUrl(track.url);
     const content = [
       `▶️  **Now Playing**`,
       `**${track.title}**`,
       `👤 ${track.author}  •  ⏱️ ${this._formatDuration(track.duration)}`,
-      `🔗 ${track.url}`,
+      showLink ? `🔗 ${track.url}` : '',
       track.requestedBy ? `Requested by <@${track.requestedBy}>` : '',
     ].filter(Boolean).join('\n');
 
