@@ -30,9 +30,9 @@ A full-featured Discord music bot that plays YouTube audio in voice channels, wi
 ---
 
 ## 🔥Extras
-If you have your own server or have some money to spare(to buy an proxy if you are using free hosting), you can use [node-ytdl-core](https://github.com/fent/node-ytdl-core) 
-With that, you can directly input youtube links and use the youtube videos and not the audio from Sound Cloud.
-I will add guid for this later
+-If you have your own server or have some money to spare(to buy an proxy if you are using free hosting), you can use [node-ytdl-core](https://github.com/fent/node-ytdl-core) 
+-With that, you can directly input youtube links and use the youtube videos and not the audio from Sound Cloud.
+-I will add guid for this later
 
 
 ## 🚀 Setup Guide
