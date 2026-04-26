@@ -2,7 +2,19 @@ const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const playdl = require('play-dl');
-const { getYtDlpAuthArgs } = require('./ytDlpConfig');
+const { getYtDlpAuthArgs, getYtDlpAuthDebugInfo } = require('./ytDlpConfig');
+
+let authLogged = false;
+
+function logAuthInfoOnce(context) {
+    if (authLogged) return;
+    authLogged = true;
+    const info = getYtDlpAuthDebugInfo();
+    console.log(
+        `[yt-dlp auth][${context}] hasCookies=${info.hasCookies} source=${info.cookiesSource} ` +
+        `cookiesPath=${info.cookiesPath || 'none'} extractorArgs=${info.hasExtractorArgs}`
+    );
+}
 
 function getYtDlpPath() {
     const envBin = process.env.YTDLP_BIN?.trim();
@@ -28,6 +40,7 @@ function ytDlpInfo(url) {
     return new Promise((resolve, reject) => {
         const ytdlp = getYtDlpPath();
         const authArgs = getYtDlpAuthArgs();
+        logAuthInfoOnce('metadata');
         console.log('[resolver] Using binary:', ytdlp);
         
         execFile(ytdlp, [
