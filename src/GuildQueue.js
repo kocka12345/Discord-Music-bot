@@ -190,6 +190,22 @@ class GuildQueue {
     this._deleteLastNowPlayingMessage();
     this._stopLyricsDisplay();
     this._clearLyricsMessages();
+    const endedTrack = this.currentTrack;
+    const elapsedSec = this.getElapsedPlaybackSeconds();
+    const endedTooEarly = Boolean(
+      endedTrack &&
+      endedTrack.duration &&
+      endedTrack.duration > 30 &&
+      elapsedSec > 0 &&
+      elapsedSec < Math.max(10, endedTrack.duration - 8)
+    );
+    if (endedTooEarly && !endedTrack._retryAfterEarlyEnd) {
+      this.tracks.unshift({
+        ...endedTrack,
+        _retryAfterEarlyEnd: true,
+      });
+      this._sendTemporaryChannelMessage(`⚠️ Stream for **${endedTrack.title}** ended too early, trying once more...`);
+    }
     if (this.currentTrack) {
       this.history.push(this.currentTrack);
       if (this.history.length > HISTORY_LIMIT) this.history.shift();
@@ -386,9 +402,32 @@ class GuildQueue {
     return generalText || this.textChannel;
   }
 
+  _resolveRequesterVoiceChannel() {
+    const guild = this.textChannel?.guild;
+    const userId = this.currentTrack?.requestedBy;
+    if (!guild || !userId) return null;
+    const member = guild.members.cache.get(userId);
+    return member?.voice?.channel || null;
+  }
+
+  _resolveConfiguredLyricsChannel() {
+    const requesterVoiceChannel = this._resolveRequesterVoiceChannel();
+    if (!requesterVoiceChannel) return this._resolveLyricsChannel();
+    const forcedChannel = requesterVoiceChannel;
+    if (
+      forcedChannel &&
+      typeof forcedChannel.isTextBased === 'function' &&
+      forcedChannel.isTextBased() &&
+      typeof forcedChannel.send === 'function'
+    ) {
+      return forcedChannel;
+    }
+    return this._resolveLyricsChannel();
+  }
+
   async _sendLyricsToQueueChannel(content) {
     const userId = this.currentTrack?.requestedBy;
-    const channel = this._resolveLyricsChannel();
+    const channel = this._resolveConfiguredLyricsChannel();
     try {
       const msg = await channel.send(content);
       this._lyricMessages.push(msg);

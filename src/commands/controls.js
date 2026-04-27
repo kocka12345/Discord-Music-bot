@@ -38,8 +38,11 @@ const pauseCmd = {
 
   async execute(interaction, client) {
     const queue = client.queues.get(interaction.guildId);
-    if (!queue || !queue.isPlaying()) {
+    if (!queue || !queue.currentTrack) {
       return interaction.reply({ content: '❌ Nothing is playing.', ephemeral: true });
+    }
+    if (queue.isPaused()) {
+      return interaction.reply({ content: '❌ Track is already paused.', ephemeral: true });
     }
     queue.pause();
     await interaction.reply({ content: '⏸️ Paused.', ephemeral: true });
@@ -53,7 +56,10 @@ const resumeCmd = {
 
   async execute(interaction, client) {
     const queue = client.queues.get(interaction.guildId);
-    if (!queue || !queue.isPaused()) {
+    if (!queue || !queue.currentTrack) {
+      return interaction.reply({ content: '❌ Nothing is playing.', ephemeral: true });
+    }
+    if (!queue.isPaused()) {
       return interaction.reply({ content: '❌ Nothing is paused.', ephemeral: true });
     }
     queue.resume();

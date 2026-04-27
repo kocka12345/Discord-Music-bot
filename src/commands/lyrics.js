@@ -119,8 +119,16 @@ module.exports = {
     const body = lines.join('\n');
     const full = header + body;
 
-    // Post publicly (not ephemeral) to the text channel associated with the queue
-    const textChannel = queue?.textChannel || interaction.channel;
+    // Post publicly (not ephemeral) to the requester's current voice channel chat when possible.
+    const forcedLyricsChannel = interaction.member?.voice?.channel || null;
+    const textChannel = (
+      forcedLyricsChannel &&
+      typeof forcedLyricsChannel.isTextBased === 'function' &&
+      forcedLyricsChannel.isTextBased() &&
+      typeof forcedLyricsChannel.send === 'function'
+    )
+      ? forcedLyricsChannel
+      : (queue?.textChannel || interaction.channel);
     if (full.length <= 2000) {
       await textChannel.send(full);
     } else {
