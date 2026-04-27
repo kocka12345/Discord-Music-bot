@@ -170,7 +170,7 @@ class GuildQueue {
       this._pausedAccumulatedMs = 0;
 
       this._deleteLastNowPlayingMessage();
-      this._lastNowPlayingMessage = await this._sendPersistentChannelMessage(this._nowPlayingEmbed(this.currentTrack));
+      this._lastNowPlayingMessage = await this._sendPersistentLyricsChannelMessage(this._nowPlayingEmbed(this.currentTrack));
       if (this.currentTrack.source === 'soundcloud-fallback') {
         this._sendTemporaryChannelMessage('ℹ️ YouTube is rate-limited right now, using SoundCloud fallback for playback.');
       }
@@ -356,6 +356,15 @@ class GuildQueue {
   async _sendPersistentChannelMessage(payload) {
     try {
       return await this.textChannel.send(payload);
+    } catch {
+      return null;
+    }
+  }
+
+  async _sendPersistentLyricsChannelMessage(payload) {
+    const channel = this._resolveConfiguredLyricsChannel();
+    try {
+      return await channel.send(payload);
     } catch {
       return null;
     }

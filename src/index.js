@@ -60,6 +60,7 @@ for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) 
 }
 
 client.queues = new Map();
+client.pendingLyricsSelections = new Map();
 
 // ── Playlist file ─────────────────────────────────────────────────────────────
 const dataDir = path.join(__dirname, 'data');
@@ -377,6 +378,57 @@ client.on('interactionCreate', async interaction => {
 // ── Select menu: add track to chosen playlist ──────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (!interaction.isStringSelectMenu()) return;
+  if (interaction.customId.startsWith('lyrics_mode_select:')) {
+    await interaction.deferUpdate();
+    const token = interaction.customId.slice('lyrics_mode_select:'.length);
+    const selected = interaction.values[0];
+    const payload = client.pendingLyricsSelections?.get(token);
+
+    if (!payload || payload.expiresAt < Date.now()) {
+      if (payload) client.pendingLyricsSelections.delete(token);
+      return interaction.editReply({
+        content: '❌ Lyrics selection expired. Run `/lyrics` again.',
+        components: [],
+      });
+    }
+    if (payload.userId !== interaction.user.id) {
+      return interaction.followUp({
+        content: '❌ This selection menu is not for you.',
+        ephemeral: true,
+      });
+    }
+
+    const queue = client.queues.get(payload.guildId);
+    const voiceChannel = interaction.member?.voice?.channel || null;
+    const targetChannel = (
+      voiceChannel &&
+      typeof voiceChannel.isTextBased === 'function' &&
+      voiceChannel.isTextBased() &&
+      typeof voiceChannel.send === 'function'
+    )
+      ? voiceChannel
+      : (queue?.textChannel || interaction.channel);
+
+    const header = `📜 **${payload.songQuery}${payload.artistQuery ? ` — ${payload.artistQuery}` : ''}**\n\n`;
+    const body = payload.plainLyrics.split('\n').map(l => l.trim()).join('\n');
+    if ((header + body).length <= 2000) {
+      await targetChannel.send(header + body);
+    } else {
+      await targetChannel.send(header + body.slice(0, 1900 - header.length) + '\n…*(lyrics truncated)*');
+    }
+
+    if (selected === 'live' && queue?.currentTrack) {
+      queue.currentTrack.lyrics = payload.timedLyrics;
+      queue._startLyricsDisplay(queue.getElapsedPlaybackSeconds());
+      await interaction.editReply({ content: '✅ Live lyrics enabled and lyrics posted.', components: [] });
+    } else {
+      await interaction.editReply({ content: '✅ Lyrics posted (text only).', components: [] });
+    }
+
+    client.pendingLyricsSelections.delete(token);
+    return;
+  }
+
   if (!interaction.customId.startsWith('playlist_select:')) return;
 
   await interaction.deferUpdate();
