@@ -55,7 +55,7 @@ module.exports = {
     try {
     let canUseInteractionReply = true;
     try {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply();
     } catch (err) {
       if (isInteractionAckError(err)) {
         canUseInteractionReply = false;
@@ -151,9 +151,9 @@ module.exports = {
         log.error('play', 'Failed to start playback:', err.message);
       });
       if (tracks.length === 1) {
-        await replySafe(`🎵 Starting **${tracks[0].title}**`);
+        await replySafe(`🎵 Starting playing **${tracks[0].title}**`);
       } else {
-        await replySafe(`🎵 Starting playlist — **${tracks.length} tracks** added`);
+        await replySafe(`🎵 Starting playlist — **${tracks.length} tracks**`);
       }
     } else {
       if (tracks.length === 1) {
