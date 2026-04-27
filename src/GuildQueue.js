@@ -477,12 +477,12 @@ class GuildQueue {
       .setColor(0x5865F2)
       .setTitle('Now Playing')
       .setDescription([
-        `**${track.title}**`,
+        `🎵 **${track.title}**`,
         `👤 **Artist:** ${track.author || 'Unknown Artist'}`,
         track.album ? `💿 **Album:** ${track.album}` : null,
         `⏱️ **Duration:** ${this._formatDuration(track.duration)}`,
         `🌐 **Source:** ${sourceLabel}`,
-        track.requestedBy ? `Requested by <@${track.requestedBy}>` : '',
+        track.requestedBy ? `🙋 **Requested by:** <@${track.requestedBy}>` : '',
       ].filter(Boolean).join('\n'))
       .setFooter({ text: 'discord-music-bot' })
       .setTimestamp();
@@ -493,30 +493,23 @@ class GuildQueue {
     const controlsRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('npctl:toggle_pause')
-        .setLabel('⏯ Pause/Resume')
+        .setEmoji('⏯️')
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('npctl:previous')
-        .setLabel('⏮ Previous')
+        .setEmoji('⏮️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('npctl:next')
-        .setLabel('⏭ Next')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId('npctl:shuffle')
-        .setLabel('🔀 Shuffle')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId('npctl:show_queue')
-        .setLabel('📜 Queue')
+        .setEmoji('⏭️')
         .setStyle(ButtonStyle.Secondary)
     );
 
     const playlistRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`add_to_playlist:${track.url}`)
-        .setLabel('➕ Add to Playlist')
+        .setEmoji('➕')
+        .setLabel('Playlist')
         .setStyle(ButtonStyle.Secondary)
     );
 
@@ -525,13 +518,13 @@ class GuildQueue {
         .setCustomId('npctl:more_features')
         .setPlaceholder('More features...')
         .addOptions(
-          { label: 'Show Queue', value: 'show_queue', description: 'Display current queue' },
-          { label: 'Shuffle Queue', value: 'shuffle', description: 'Shuffle upcoming tracks' },
-          { label: 'Lyrics (Live)', value: 'lyrics_live', description: 'Sync live lyrics for current track' },
-          { label: 'Loop Off', value: 'loop_none', description: 'Disable loop mode' },
-          { label: 'Loop Current Track', value: 'loop_track', description: 'Repeat current song' },
-          { label: 'Loop Queue', value: 'loop_queue', description: 'Repeat full queue' },
-          { label: 'Stop Player', value: 'stop', description: 'Stop and clear queue' }
+          { label: '📜 Show Queue', value: 'show_queue', description: 'Display current queue' },
+          { label: '🔀 Shuffle Queue', value: 'shuffle', description: 'Shuffle upcoming tracks' },
+          { label: '🎤 Lyrics (Live)', value: 'lyrics_live', description: 'Sync live lyrics for current track' },
+          { label: '➡️ Loop Off', value: 'loop_none', description: 'Disable loop mode' },
+          { label: '🔂 Loop Current Track', value: 'loop_track', description: 'Repeat current song' },
+          { label: '🔁 Loop Queue', value: 'loop_queue', description: 'Repeat full queue' },
+          { label: '⏹️ Stop Player', value: 'stop', description: 'Stop and clear queue' }
         )
     );
 
