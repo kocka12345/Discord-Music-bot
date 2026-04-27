@@ -36,6 +36,7 @@ module.exports = {
             '`/nowplaying` — Show current track info',
             '`/lyrics [song] [artist]` — Fetch lyrics (also displays live in chat)',
             '`/lyrics mode:<on|off>` — Toggle live lyrics display',
+            '`/bio` — Show bot profile',
           ].join('\n'),
         },
         {
