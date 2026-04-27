@@ -33,9 +33,8 @@ module.exports = {
           name: '📋 Queue & Info',
           value: [
             '`/queue [page]` — Show the queue',
-            '`/nowplaying` — Show current track info',
-            '`/lyrics [song] [artist]` — Fetch lyrics (also displays live in chat)',
-            '`/lyrics mode:<on|off>` — Toggle live lyrics display',
+            '`/nowplaying` — Show current track info (ephemeral)',
+            '`/lyrics [song] [artist]` — Fetch + start live lyrics for current song',
             '`/bio` — Show bot profile',
           ].join('\n'),
         },
@@ -54,6 +53,8 @@ module.exports = {
         {
           name: '🛡️ Admin',
           value: [
+            '`/setup show` — Show server setup (admin role + test mode)',
+            '`/setup set ...` — Configure admin role, cooldown, limits, test mode',
             '`/block add <url|name>` — Block a song by URL or title',
             '`/block remove <url|name>` — Unblock a song',
             '`/block list` — Show blocked songs',

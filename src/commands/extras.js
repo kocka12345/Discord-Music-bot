@@ -32,7 +32,7 @@ const nowplayingCmd = {
     if (t.thumbnail) embed.setThumbnail(t.thumbnail);
     if (t.url) embed.setURL(t.url);
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   },
 };
 

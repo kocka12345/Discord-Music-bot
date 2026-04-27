@@ -1,6 +1,4 @@
-const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
-
-const LYRICS_SELECTION_TTL_MS = 5 * 60 * 1000;
+const { SlashCommandBuilder } = require('discord.js');
 
 function parseSyncedLyrics(syncedLyrics) {
   if (!syncedLyrics) return [];
@@ -36,15 +34,19 @@ function buildFallbackTimedLyrics(plainLyrics, trackDurationSec = 0) {
 }
 
 function resolveLyricsPostChannel(interaction, queue) {
+  if (queue && typeof queue.resolveLyricsOutputChannel === 'function') {
+    return queue.resolveLyricsOutputChannel(interaction.member);
+  }
   const forcedLyricsChannel = interaction.member?.voice?.channel || null;
-  return (
+  if (
     forcedLyricsChannel &&
     typeof forcedLyricsChannel.isTextBased === 'function' &&
     forcedLyricsChannel.isTextBased() &&
     typeof forcedLyricsChannel.send === 'function'
-  )
-    ? forcedLyricsChannel
-    : (queue?.textChannel || interaction.channel);
+  ) {
+    return forcedLyricsChannel;
+  }
+  return interaction.channel;
 }
 
 async function sendFullLyricsToChannel(channel, songQuery, artistQuery, plainLyrics) {
@@ -64,14 +66,6 @@ module.exports = {
     .setName('lyrics')
     .setDescription('Fetch lyrics for current song or custom song')
     .addStringOption(o =>
-      o.setName('mode')
-        .setDescription('Turn live lyrics on or off')
-        .addChoices(
-          { name: 'On', value: 'on' },
-          { name: 'Off', value: 'off' }
-        )
-    )
-    .addStringOption(o =>
       o.setName('song').setDescription('Song name (leave blank to use current track)')
     )
     .addStringOption(o =>
@@ -82,12 +76,6 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const queue = client.queues.get(interaction.guildId);
-    const mode = interaction.options.getString('mode');
-    if (mode) {
-      if (!queue) return interaction.editReply('❌ Nothing is playing.');
-      queue.setLyricsEnabled(mode === 'on');
-      return interaction.editReply(`✅ Live lyrics are now **${mode === 'on' ? 'ON' : 'OFF'}**.`);
-    }
 
     let songQuery = interaction.options.getString('song');
     let artistQuery = interaction.options.getString('artist');
@@ -167,36 +155,6 @@ module.exports = {
       ? timedLyrics
       : buildFallbackTimedLyrics(plainLyrics, queue?.currentTrack?.duration || 0);
     const textChannel = resolveLyricsPostChannel(interaction, queue);
-    const hasCurrentTrack = Boolean(queue?.currentTrack);
-
-    if (hasCurrentTrack && !interaction.options.getString('song') && !interaction.options.getString('artist')) {
-      client.pendingLyricsSelections = client.pendingLyricsSelections || new Map();
-      const token = `${interaction.guildId}:${interaction.user.id}:${Date.now()}`;
-      client.pendingLyricsSelections.set(token, {
-        guildId: interaction.guildId,
-        userId: interaction.user.id,
-        songQuery,
-        artistQuery,
-        plainLyrics,
-        timedLyrics: timed,
-        expiresAt: Date.now() + LYRICS_SELECTION_TTL_MS,
-      });
-
-      const select = new StringSelectMenuBuilder()
-        .setCustomId(`lyrics_mode_select:${token}`)
-        .setPlaceholder('How should I send lyrics?')
-        .addOptions(
-          { label: 'Live lyrics + full text', value: 'live' },
-          { label: 'Only full lyrics text', value: 'text' }
-        );
-
-      const row = new ActionRowBuilder().addComponents(select);
-      return interaction.editReply({
-        content: 'Choose lyrics mode for the currently playing track:',
-        components: [row],
-      });
-    }
-
     if (queue?.currentTrack) {
       queue.currentTrack.lyrics = timed;
       queue._startLyricsDisplay(queue.getElapsedPlaybackSeconds());

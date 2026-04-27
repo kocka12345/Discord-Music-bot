@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { getGuildSettings, memberCanUseAdminCommand } = require('../guildSettings');
 
 function getBlockedFile(client) {
   return path.join(path.dirname(client.playlistFile), 'blocked.json');
@@ -22,7 +23,6 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('block')
     .setDescription('Block/unblock songs (admin only)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand(s =>
       s.setName('add')
         .setDescription('Block a song by URL or title keyword')
@@ -43,6 +43,14 @@ module.exports = {
     ),
 
   async execute(interaction, client) {
+    const settings = getGuildSettings(client, interaction.guildId);
+    if (!memberCanUseAdminCommand(interaction.member, settings)) {
+      const roleHint = settings.adminRoleId
+        ? `You need role <@&${settings.adminRoleId}> (or Administrator).`
+        : 'No admin role is configured yet. Run `/setup set admin_role:<role>` first.';
+      return interaction.reply({ content: `❌ You cannot use /block here. ${roleHint}`, ephemeral: true });
+    }
+
     const sub = interaction.options.getSubcommand();
     const blocked = loadBlocked(client);
 

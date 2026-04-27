@@ -7,8 +7,7 @@ const {
 const GuildQueue = require('../GuildQueue');
 const { resolve } = require('../resolver');
 const log = require('../logger');
-
-const PLAY_COOLDOWN_MS = 1500;
+const { getGuildSettings } = require('../guildSettings');
 
 function isInteractionAckError(err) {
   return err?.code === 10062 || err?.code === 40060;
@@ -28,11 +27,13 @@ module.exports = {
     log.debug('play', `Received /play from ${interaction.user.id}`);
     client._playCooldowns = client._playCooldowns || new Map();
     client._playInFlightGuilds = client._playInFlightGuilds || new Set();
+    const guildSettings = getGuildSettings(client, interaction.guildId);
+    const cooldownMs = Math.max(0, Number(guildSettings.playCooldownSec || 0) * 1000);
 
     const cooldownKey = `${interaction.guildId}:${interaction.user.id}`;
     const now = Date.now();
     const lastCall = client._playCooldowns.get(cooldownKey) || 0;
-    const remainingMs = PLAY_COOLDOWN_MS - (now - lastCall);
+    const remainingMs = cooldownMs - (now - lastCall);
     if (remainingMs > 0) {
       const waitSec = (remainingMs / 1000).toFixed(1);
       await interaction.reply({
@@ -55,7 +56,7 @@ module.exports = {
     try {
     let canUseInteractionReply = true;
     try {
-      await interaction.deferReply();
+      await interaction.deferReply({ ephemeral: true });
     } catch (err) {
       if (isInteractionAckError(err)) {
         canUseInteractionReply = false;
@@ -111,6 +112,13 @@ module.exports = {
     }
     tracks = allowed;
 
+    const maxTracks = Math.max(1, Number(guildSettings.maxTracksPerPlay || 30));
+    if (tracks.length > maxTracks) {
+      const dropped = tracks.length - maxTracks;
+      tracks = tracks.slice(0, maxTracks);
+      await replySafe(`ℹ️ This server allows max **${maxTracks}** tracks per /play. Trimmed **${dropped}** track(s).`);
+    }
+
     // Get or create guild queue
     let queue = client.queues.get(interaction.guildId);
 
@@ -133,11 +141,14 @@ module.exports = {
 
       queue = new GuildQueue(connection, interaction.channel);
       client.queues.set(interaction.guildId, queue);
+      queue.setVolume(Number(guildSettings.defaultVolume || 50));
+      queue.setLyricsEnabled(Boolean(guildSettings.autoLiveLyrics));
 
       queue.connection.on(VoiceConnectionStatus.Destroyed, () => {
         client.queues.delete(interaction.guildId);
       });
     }
+    queue.setPreferredVoiceChannelId(voiceChannel.id);
 
     // Add tracks
     for (const track of tracks) {
@@ -151,9 +162,11 @@ module.exports = {
         log.error('play', 'Failed to start playback:', err.message);
       });
       if (tracks.length === 1) {
-        await replySafe(`🎵 Starting playing **${tracks[0].title}**`);
+        const prefix = guildSettings.testMode ? '🧪 [TEST MODE] ' : '';
+        await replySafe(`${prefix}🎵 Starting playing **${tracks[0].title}**`);
       } else {
-        await replySafe(`🎵 Starting playlist — **${tracks.length} tracks**`);
+        const prefix = guildSettings.testMode ? '🧪 [TEST MODE] ' : '';
+        await replySafe(`${prefix}🎵 Starting playlist — **${tracks.length} tracks**`);
       }
     } else {
       if (tracks.length === 1) {

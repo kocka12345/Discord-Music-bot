@@ -5,7 +5,7 @@ const {
   VoiceConnectionStatus,
   entersState,
 } = require('@discordjs/voice');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } = require('discord.js');
 const playdl = require('play-dl');
 const log = require('./logger');
 
@@ -109,6 +109,7 @@ class GuildQueue {
     this._lastNowPlayingMessage = null;
     this._lyricMessages = [];
     this.lyricsEnabled = true;
+    this.preferredVoiceChannelId = voiceConnection?.joinConfig?.channelId || null;
 
     this.connection.subscribe(this.player);
 
@@ -413,8 +414,13 @@ class GuildQueue {
 
   _resolveRequesterVoiceChannel() {
     const guild = this.textChannel?.guild;
+    if (!guild) return null;
+    if (this.preferredVoiceChannelId) {
+      const preferred = guild.channels.cache.get(this.preferredVoiceChannelId);
+      if (preferred) return preferred;
+    }
     const userId = this.currentTrack?.requestedBy;
-    if (!guild || !userId) return null;
+    if (!userId) return null;
     const member = guild.members.cache.get(userId);
     return member?.voice?.channel || null;
   }
@@ -443,6 +449,23 @@ class GuildQueue {
     } catch (err) {
       log.warn('lyrics', `Could not post lyrics to text channel for user ${userId || 'unknown'}: ${err.message}`);
     }
+  }
+
+  setPreferredVoiceChannelId(channelId) {
+    this.preferredVoiceChannelId = channelId || null;
+  }
+
+  resolveLyricsOutputChannel(member) {
+    const memberVoice = member?.voice?.channel;
+    if (
+      memberVoice &&
+      typeof memberVoice.isTextBased === 'function' &&
+      memberVoice.isTextBased() &&
+      typeof memberVoice.send === 'function'
+    ) {
+      return memberVoice;
+    }
+    return this._resolveConfiguredLyricsChannel();
   }
 
   _nowPlayingEmbed(track) {
@@ -497,7 +520,22 @@ class GuildQueue {
         .setStyle(ButtonStyle.Secondary)
     );
 
-    return { embeds: [embed], components: [controlsRow, playlistRow] };
+    const featuresRow = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('npctl:more_features')
+        .setPlaceholder('More features...')
+        .addOptions(
+          { label: 'Show Queue', value: 'show_queue', description: 'Display current queue' },
+          { label: 'Shuffle Queue', value: 'shuffle', description: 'Shuffle upcoming tracks' },
+          { label: 'Lyrics (Live)', value: 'lyrics_live', description: 'Sync live lyrics for current track' },
+          { label: 'Loop Off', value: 'loop_none', description: 'Disable loop mode' },
+          { label: 'Loop Current Track', value: 'loop_track', description: 'Repeat current song' },
+          { label: 'Loop Queue', value: 'loop_queue', description: 'Repeat full queue' },
+          { label: 'Stop Player', value: 'stop', description: 'Stop and clear queue' }
+        )
+    );
+
+    return { embeds: [embed], components: [controlsRow, playlistRow, featuresRow] };
   }
 
   _formatDuration(seconds) {
