@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const { resolve } = require('../resolver');
+const { getGuildSettings } = require('../guildSettings');
 
 // ── Playlist helpers ───────────────────────────────────────────────────────
 
@@ -103,6 +104,7 @@ const playlistCmd = {
       if (!playlists[name]) return interaction.reply({ content: `❌ Playlist **${name}** not found.`, ephemeral: true });
 
       await interaction.deferReply();
+      const guildSettings = getGuildSettings(client, interaction.guildId);
 
       let tracks;
       try {
@@ -198,8 +200,11 @@ const playlistCmd = {
 
         queue = new GuildQueue(connection, interaction.channel);
         client.queues.set(interaction.guildId, queue);
+        queue.setVolume(Number(guildSettings.defaultVolume || 50));
+        queue.setLyricsEnabled(Boolean(guildSettings.autoLiveLyrics));
         queue.connection.on(VoiceConnectionStatus.Destroyed, () => client.queues.delete(interaction.guildId));
       }
+      queue.setPreferredVoiceChannelId(voiceChannel.id);
 
       for (const t of tracks) {
         queue.addTrack({ ...t, requestedBy: userId, lyrics: null });
