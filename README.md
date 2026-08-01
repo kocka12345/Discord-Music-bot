@@ -2,6 +2,7 @@
 
 A full-featured Discord music bot that plays YouTube audio in voice channels, with queue management, personal playlists, and live lyrics.
 
+Note: This was made with Ai, it was made in very short time as a experiment. Its not complete neither perfect.
 ---
 
 ## ✨ Features
