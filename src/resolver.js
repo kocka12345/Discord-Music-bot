@@ -1,6 +1,4 @@
 const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
 const playdl = require('play-dl');
 const log = require('./logger');
 const { enrichTrackMetadata } = require('./trackMetadata');
@@ -70,26 +68,10 @@ function parseYouTubeListId(url) {
     }
 }
 
-function getCookieArg() {
-    if (!process.env.PLAYDL_YOUTUBE_COOKIE_B64) return '';
-    try {
-        const cookieFilePath = path.join('/tmp', 'yt_cookies.txt');
-        if (!fs.existsSync(cookieFilePath)) {
-            let cookieText = Buffer.from(process.env.PLAYDL_YOUTUBE_COOKIE_B64.trim(), 'base64').toString('utf8');
-            cookieText = cookieText.replace(/\ufffd/g, '');
-            fs.writeFileSync(cookieFilePath, cookieText, 'utf8');
-        }
-        return `--cookies "${cookieFilePath}"`;
-    } catch (err) {
-        return '';
-    }
-}
-
 function runYtDlp(target, options = '') {
     try {
-        const cookieArg = getCookieArg();
-        // Použití ověřených klientů web a ios, které podporují cookies a obcházejí SABR
-        const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --extractor-args "youtube:player_client=web,ios" ${cookieArg} ${options} "${target}"`;
+        // Použití ios,web klientů bez cookies – obchází bot check bez nutnosti přihlášení
+        const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --extractor-args "youtube:player_client=ios,web" ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
@@ -139,13 +121,69 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
     return [await enrichTrackMetadata(single)];
 }
 
+async function fetchYouTubeBasicMeta(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    try {
+        const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+        const res = await fetch(endpoint, { signal: controller.signal });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return {
+            title: data?.title || null,
+            author: data?.author_name || null,
+            thumbnail: data?.thumbnail_url || null,
+        };
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
+    const meta = await fetchYouTubeBasicMeta(url);
+    const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
+    if (!query) {
+        throw new Error('Could not read YouTube title for fallback lookup.');
+    }
+
+    const scResults = await playdl.search(query, {
+        source: { soundcloud: 'tracks' },
+        limit: 1,
+    }).catch(() => []);
+
+    if (!scResults.length) {
+        throw new Error('Could not resolve URL via yt-dlp and no SoundCloud match found.');
+    }
+
+    const sc = normalizeSearchTrack(scResults[0], requestedBy);
+    return [{
+        title: meta?.title || sc.title || 'Unknown Title',
+        url: url,
+        streamUrl: sc.url,
+        author: sc.author || meta?.author || 'Unknown Artist',
+        duration: sc.duration || 0,
+        thumbnail: sc.thumbnail || meta?.thumbnail || null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+        album: null,
+        source: 'soundcloud-from-youtube',
+    }];
+}
+
 async function resolve(input, requestedBy) {
     const trimmed = input.trim();
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
     if (isUrl) {
         log.info('resolver', 'URL detected, resolving via yt-dlp...');
-        return resolveUrlViaYtDlp(trimmed, requestedBy);
+        try {
+            return await resolveUrlViaYtDlp(trimmed, requestedBy);
+        } catch (err) {
+            log.warn('resolver', `yt-dlp failed, falling back to SoundCloud: ${err.message}`);
+            return resolveYouTubeUrlViaSoundCloudFallback(trimmed, requestedBy);
+        }
     }
 
     log.info('resolver', 'Searching via SoundCloud / yt-dlp:', trimmed);
