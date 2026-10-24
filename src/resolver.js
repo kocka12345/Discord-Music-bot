@@ -1,3 +1,4 @@
+const { execSync } = require('child_process');
 const playdl = require('play-dl');
 const log = require('./logger');
 const { enrichTrackMetadata } = require('./trackMetadata');
@@ -56,18 +57,6 @@ function normalizeSearchTrack(found, requestedBy) {
     };
 }
 
-function videoDetailsToTrack(details, requestedBy) {
-    return {
-        title: details.title || details.id || 'Unknown Title',
-        url: details.url || `https://www.youtube.com/watch?v=${details.id}`,
-        author: details.channel?.name || details.channel?.url || details.channel || 'Unknown Artist',
-        duration: details.durationInSec || 0,
-        thumbnail: details.thumbnails?.[0]?.url || details.thumbnail?.url || null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-    };
-}
-
 function parseYouTubeListId(url) {
     try {
         const parsed = new URL(url);
@@ -79,146 +68,55 @@ function parseYouTubeListId(url) {
     }
 }
 
-function isYouTubeUrl(url) {
-    return /(?:youtube\.com|youtu\.be)/i.test(url || '');
-}
-
-function extractYouTubeId(url) {
+function runYtDlp(target, options = '') {
     try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.replace(/^www\./, '');
-        if (host === 'youtu.be') {
-            return parsed.pathname.replace('/', '').trim() || null;
-        }
-        if (host === 'youtube.com' || host === 'm.youtube.com') {
-            if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
-            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/live/')) {
-                const id = parsed.pathname.split('/').pop();
-                return id || null;
-            }
-        }
-    } catch {}
-    return null;
-}
-
-async function fetchYouTubeBasicMeta(url) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    try {
-        const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-        const res = await fetch(endpoint, { signal: controller.signal });
-        if (!res.ok) return null;
-        const data = await res.json();
-        return {
-            title: data?.title || null,
-            author: data?.author_name || null,
-            thumbnail: data?.thumbnail_url || null,
-        };
-    } catch {
-        return null;
-    } finally {
-        clearTimeout(timeout);
+        const cmd = `yt-dlp ${options} "${target}"`;
+        const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+        return stdout;
+    } catch (err) {
+        throw new Error(err.message || 'yt-dlp execution failed');
     }
 }
 
-async function resolveYouTubeUrlViaSoundCloud(url, requestedBy) {
-    const meta = await fetchYouTubeBasicMeta(url);
-    const videoId = extractYouTubeId(url);
-    const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
-    if (!query) {
-        throw new Error('Could not read YouTube title for SoundCloud lookup.');
-    }
-
-    const scResults = await playdl.search(query, {
-        source: { soundcloud: 'tracks' },
-        limit: 1,
-    }).catch(() => []);
-
-    if (!scResults.length) {
-        throw new Error('No SoundCloud match found for this YouTube link.');
-    }
-
-    const sc = normalizeSearchTrack(scResults[0], requestedBy);
-    return [{
-        title: meta?.title || sc.title || 'Unknown Title',
-        url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : url,
-        streamUrl: sc.url,
-        author: sc.author || meta?.author || 'Unknown Artist',
-        duration: sc.duration || 0,
-        thumbnail: sc.thumbnail || meta?.thumbnail || null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-        album: null,
-        source: 'soundcloud-from-youtube',
-    }];
-}
-
-function shouldExpandWatchMix(url) {
-    try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.replace(/^www\./, '');
-        if (host !== 'youtube.com' && host !== 'm.youtube.com') return false;
-        return parsed.pathname === '/watch' && !parsed.searchParams.get('list');
-    } catch {
-        return false;
-    }
-}
-
-async function resolveYouTubeWatchMix(url, requestedBy) {
-    const seed = await playdl.video_basic_info(url).catch(err => {
-        throw new Error(err.message || 'Failed to load YouTube watch info');
-    });
-
-    const tracks = [videoDetailsToTrack(seed.video_details, requestedBy)];
-    const related = Array.isArray(seed.related_videos) ? seed.related_videos : [];
-    const unique = [...new Set(related)].slice(0, 15);
-    if (!unique.length) return tracks;
-
-    // Add related URLs as lightweight tracks to emulate playlist behavior.
-    tracks.push(...unique.map((relatedUrl, idx) => ({
-        title: `Mix Track ${idx + 1}`,
-        url: relatedUrl,
-        author: 'YouTube Mix',
-        duration: 0,
-        thumbnail: null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-    })));
-    return tracks;
-}
-
-async function resolveUrl(url, requestedBy) {
+async function resolveUrlViaYtDlp(url, requestedBy) {
     const normalizedUrl = normalizeYouTubeUrl(url);
     const listId = parseYouTubeListId(normalizedUrl);
-    if (isYouTubeUrl(normalizedUrl) && !listId) {
-        return resolveYouTubeUrlViaSoundCloud(normalizedUrl, requestedBy);
-    }
 
-    const playlistUrl = listId ? `https://www.youtube.com/playlist?list=${listId}` : normalizedUrl;
+    if (listId) {
+        log.info('resolver', 'Playlist detected, resolving via yt-dlp...');
+        const output = runYtDlp(`https://www.youtube.com/playlist?list=${listId}`, '-j --flat-playlist');
+        const lines = output.trim().split('\n').filter(Boolean);
+        const videos = lines.map(line => {
+            try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean);
 
-    const playlist = await playdl.playlist_info(playlistUrl, { incomplete: true }).catch(() => null);
-    if (playlist) {
-        const videos = await playlist.all_videos();
-        if (!videos?.length) throw new Error('Playlist is empty or unavailable.');
+        if (!videos.length) throw new Error('Playlist is empty or unavailable.');
         return videos.map(v => ({
             title: v.title || 'Unknown',
-            url: v.url,
-            author: v.channel?.name || 'Unknown',
-            duration: v.durationInSec || 0,
-            thumbnail: v.thumbnails?.[0]?.url || null,
+            url: v.url || (v.id ? `https://www.youtube.com/watch?v=${v.id}` : null),
+            author: v.uploader || v.channel || 'Unknown',
+            duration: v.duration || 0,
+            thumbnail: v.thumbnail || v.thumbnails?.[0]?.url || null,
             requestedBy: requestedBy || null,
             lyrics: null,
         }));
     }
 
-    if (shouldExpandWatchMix(normalizedUrl)) {
-        return resolveYouTubeWatchMix(normalizedUrl, requestedBy);
-    }
-
-    const info = await playdl.video_basic_info(normalizedUrl).catch(err => {
-        throw new Error(err.message || 'Failed to fetch video info');
-    });
-    const single = videoDetailsToTrack(info.video_details, requestedBy);
+    log.info('resolver', 'Resolving single video via yt-dlp...');
+    const output = runYtDlp(normalizedUrl, '-j --no-playlist');
+    const data = JSON.parse(output.trim().split('\n')[0]);
+    const single = {
+        title: data.title || 'Unknown Title',
+        url: data.webpage_url || data.original_url || normalizedUrl,
+        streamUrl: data.url || null,
+        author: data.uploader || data.channel || 'Unknown Artist',
+        duration: data.duration || 0,
+        thumbnail: data.thumbnail || null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+        album: null,
+        source: 'youtube'
+    };
     return [await enrichTrackMetadata(single)];
 }
 
@@ -227,28 +125,41 @@ async function resolve(input, requestedBy) {
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
     if (isUrl) {
-        log.info('resolver', 'URL detected, resolving via play-dl...');
-        return resolveUrl(trimmed, requestedBy);
+        log.info('resolver', 'URL detected, resolving via yt-dlp...');
+        return resolveUrlViaYtDlp(trimmed, requestedBy);
     }
 
-    log.info('resolver', 'Searching via play-dl (SoundCloud first):', trimmed);
-
-    let found = null;
+    log.info('resolver', 'Searching via SoundCloud / yt-dlp:', trimmed);
 
     const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
         .catch(() => []);
     if (scResults.length) {
-        found = scResults[0];
+        const found = scResults[0];
         log.info('resolver', 'Selected SoundCloud result:', found.url);
-    } else {
-        const ytResults = await playdl.search(trimmed, { source: { youtube: 'video' }, limit: 1 })
-            .catch(() => []);
-        if (!ytResults.length) throw new Error('No results found for: ' + trimmed);
-        found = ytResults[0];
-        log.info('resolver', 'Selected YouTube fallback result:', found.url);
+        return [await enrichTrackMetadata(normalizeSearchTrack(found, requestedBy))];
     }
 
-    return [await enrichTrackMetadata(normalizeSearchTrack(found, requestedBy))];
+    // Fallback to yt-dlp search
+    try {
+        const output = runYtDlp(`ytsearch1:${trimmed}`, '-j --no-playlist');
+        const data = JSON.parse(output.trim().split('\n')[0]);
+        const track = {
+            title: data.title || 'Unknown Title',
+            url: data.webpage_url || data.original_url || `https://www.youtube.com/watch?v=${data.id}`,
+            streamUrl: data.url || null,
+            author: data.uploader || data.channel || 'Unknown Artist',
+            duration: data.duration || 0,
+            thumbnail: data.thumbnail || null,
+            requestedBy: requestedBy || null,
+            lyrics: null,
+            album: null,
+            source: 'youtube'
+        };
+        log.info('resolver', 'Selected YouTube yt-dlp search result:', track.url);
+        return [await enrichTrackMetadata(track)];
+    } catch (err) {
+        throw new Error('No results found for: ' + trimmed);
+    }
 }
 
 module.exports = { resolve };
