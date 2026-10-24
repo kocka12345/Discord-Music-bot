@@ -30,6 +30,24 @@ function normalizeYouTubeUrl(url) {
     return url;
 }
 
+function extractYouTubeId(url) {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') {
+            return parsed.pathname.replace('/', '').trim() || null;
+        }
+        if (host === 'youtube.com' || host === 'm.youtube.com') {
+            if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/live/')) {
+                const id = parsed.pathname.split('/').pop();
+                return id || null;
+            }
+        }
+    } catch {}
+    return null;
+}
+
 function normalizeSearchTrack(found, requestedBy) {
     const title = pickFirst(found?.title, found?.name, found?.id, 'Unknown Title');
     const author = pickFirst(
@@ -68,6 +86,51 @@ function parseYouTubeListId(url) {
     }
 }
 
+// Metoda 1: Piped API (Obchází blokaci Oracle Cloud IP přes externí servery)
+async function resolveUrlViaPipedApi(url, requestedBy) {
+    const videoId = extractYouTubeId(url);
+    if (!videoId) return null;
+
+    const instances = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.yt.privacy.com.de',
+        'https://pipedapi.in.projectsegfau.lt'
+    ];
+
+    for (const instance of instances) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+            const res = await fetch(`${instance}/streams/${videoId}`, { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (!res.ok) continue;
+            const data = await res.json();
+
+            const audioStream = data.audioStreams?.find(s => s.mimeType?.includes('audio')) || data.audioStreams?.[0];
+            if (!audioStream?.url) continue;
+
+            log.info('resolver', `Resolved successfully via Piped API (${instance})`);
+            const track = {
+                title: data.title || 'Unknown Title',
+                url: url,
+                streamUrl: audioStream.url,
+                author: data.uploader || 'Unknown Artist',
+                duration: data.duration || 0,
+                thumbnail: data.thumbnailUrl || null,
+                requestedBy: requestedBy || null,
+                lyrics: null,
+                album: null,
+                source: 'youtube-piped'
+            };
+            return [await enrichTrackMetadata(track)];
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
+
 function runYtDlp(target, options = '') {
     try {
         const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --extractor-args "youtube:player_client=ios,web" ${options} "${target}"`;
@@ -98,9 +161,17 @@ async function fetchYouTubeBasicMeta(url) {
     }
 }
 
+function cleanQuery(title) {
+    if (!title) return '';
+    return title
+        .replace(/\[.*?\]|\(.*?\)/g, '')
+        .replace(/(official video|official audio|lyrics|music video|hd|4k|long version)/gi, '')
+        .trim();
+}
+
 async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     const meta = await fetchYouTubeBasicMeta(url);
-    const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
+    const query = cleanQuery(meta?.title) || meta?.title;
     if (!query) {
         throw new Error('Could not read YouTube title for fallback lookup.');
     }
@@ -111,7 +182,7 @@ async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     }).catch(() => []);
 
     if (!scResults.length) {
-        throw new Error('Could not resolve URL via yt-dlp and no SoundCloud match found.');
+        throw new Error('Could not resolve URL via Piped/yt-dlp and no SoundCloud match found.');
     }
 
     const sc = normalizeSearchTrack(scResults[0], requestedBy);
@@ -153,9 +224,13 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
         }));
     }
 
-    // Pokus 1: Přímé stažení URL
+    // Krok 1: Pokus přes Piped API (obchází Oracle Cloud blokaci)
+    const pipedResult = await resolveUrlViaPipedApi(normalizedUrl, requestedBy);
+    if (pipedResult) return pipedResult;
+
+    // Krok 2: Přímý pokus přes yt-dlp
     try {
-        log.info('resolver', 'Resolving single video via yt-dlp...');
+        log.info('resolver', 'Piped API unavailable, trying direct yt-dlp...');
         const output = runYtDlp(normalizedUrl, '-j --no-playlist');
         const data = JSON.parse(output.trim().split('\n')[0]);
         const single = {
@@ -172,36 +247,9 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
         };
         return [await enrichTrackMetadata(single)];
     } catch (err) {
-        log.warn('resolver', `Direct yt-dlp failed, using oembed + search fallback: ${err.message}`);
-        
-        // Pokus 2: Získání metadat přes OEmbed a vyhledání přes ytsearch1
-        const meta = await fetchYouTubeBasicMeta(normalizedUrl);
-        const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
-        
-        if (query) {
-            try {
-                const searchOutput = runYtDlp(`ytsearch1:${query}`, '-j --no-playlist');
-                const data = JSON.parse(searchOutput.trim().split('\n')[0]);
-                const single = {
-                    title: data.title || meta?.title || 'Unknown Title',
-                    url: normalizedUrl,
-                    streamUrl: data.url || null,
-                    author: data.uploader || data.channel || meta?.author || 'Unknown Artist',
-                    duration: data.duration || 0,
-                    thumbnail: data.thumbnail || meta?.thumbnail || null,
-                    requestedBy: requestedBy || null,
-                    lyrics: null,
-                    album: null,
-                    source: 'youtube'
-                };
-                return [await enrichTrackMetadata(single)];
-            } catch (searchErr) {
-                // Pokus 3: SoundCloud fallback
-                return resolveYouTubeUrlViaSoundCloudFallback(normalizedUrl, requestedBy);
-            }
-        }
-        
-        throw err;
+        log.warn('resolver', `yt-dlp blocked, falling back to SoundCloud: ${err.message}`);
+        // Krok 3: SoundCloud fallback
+        return resolveYouTubeUrlViaSoundCloudFallback(normalizedUrl, requestedBy);
     }
 }
 
@@ -210,7 +258,7 @@ async function resolve(input, requestedBy) {
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
     if (isUrl) {
-        log.info('resolver', 'URL detected, resolving via yt-dlp...');
+        log.info('resolver', 'URL detected, resolving via Piped/yt-dlp...');
         return resolveUrlViaYtDlp(trimmed, requestedBy);
     }
 
