@@ -1,4 +1,5 @@
 const { execSync } = require('child_process');
+const playdl = require('play-dl');
 const log = require('./logger');
 const { enrichTrackMetadata } = require('./trackMetadata');
 
@@ -56,6 +57,33 @@ function parseYouTubeListId(url) {
     } catch {
         return null;
     }
+}
+
+function normalizeSearchTrack(found, requestedBy) {
+    const title = pickFirst(found?.title, found?.name, found?.id, 'Unknown Title');
+    const author = pickFirst(
+        found?.channel?.name,
+        found?.user?.name,
+        found?.uploader?.name,
+        found?.uploader,
+        'Unknown Artist'
+    );
+    const duration = found?.durationInSec || found?.duration || 0;
+    const thumbnail = pickFirst(
+        found?.thumbnails?.[0]?.url,
+        found?.thumbnail?.url,
+        found?.thumbnail
+    );
+
+    return {
+        title,
+        url: found?.url,
+        author,
+        duration,
+        thumbnail: thumbnail || null,
+        requestedBy: requestedBy || null,
+        lyrics: null,
+    };
 }
 
 // Piped API pro obcházení Oracle Cloud IP blokace na YouTube
@@ -141,7 +169,7 @@ function cleanQuery(title) {
         .trim();
 }
 
-// SoundCloud záloha přes yt-dlp – vrací správný webový odkaz na SoundCloud skladbu
+// SoundCloud záloha přes play-dl (využívá načtený klient ID, hraje celé skladby)
 async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     const meta = await fetchYouTubeBasicMeta(url);
     const query = cleanQuery(meta?.title) || meta?.title;
@@ -150,26 +178,30 @@ async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     }
 
     try {
-        log.info('resolver', `Searching SoundCloud via yt-dlp for: ${query}`);
-        const output = runYtDlp(`scsearch1:${query}`, '-j --no-playlist');
-        const data = JSON.parse(output.trim().split('\n')[0]);
-        
-        const trackUrl = data.webpage_url || data.original_url;
-        if (!trackUrl) {
-            throw new Error('SoundCloud search returned no webpage URL.');
+        log.info('resolver', `Searching SoundCloud via play-dl for: ${query}`);
+        const scResults = await playdl.search(query, {
+            source: { soundcloud: 'tracks' },
+            limit: 1,
+        }).catch(() => []);
+
+        if (!scResults.length || !scResults[0].url) {
+            throw new Error('SoundCloud search returned no valid track.');
         }
 
+        const found = scResults[0];
+        const track = normalizeSearchTrack(found, requestedBy);
+
         return [{
-            title: meta?.title || data.title || 'Unknown Title',
-            url: trackUrl,
-            streamUrl: null, // Necháme bota, ať si to vyřeší standardním streamovacím resolverem pro SoundCloud
-            author: data.uploader || data.channel || meta?.author || 'Unknown Artist',
-            duration: data.duration || 0,
-            thumbnail: data.thumbnail || meta?.thumbnail || null,
+            title: meta?.title || track.title || 'Unknown Title',
+            url: found.url,
+            streamUrl: null, // play-dl obstará plný stream přes načtený token
+            author: track.author || meta?.author || 'Unknown Artist',
+            duration: track.duration || 0,
+            thumbnail: track.thumbnail || meta?.thumbnail || null,
             requestedBy: requestedBy || null,
             lyrics: null,
             album: null,
-            source: 'soundcloud',
+            source: 'soundcloud-from-youtube',
         }];
     } catch (err) {
         throw new Error('Could not resolve URL via Piped/yt-dlp and SoundCloud fallback failed: ' + err.message);
@@ -223,8 +255,8 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
         };
         return [await enrichTrackMetadata(single)];
     } catch (err) {
-        log.warn('resolver', `yt-dlp blocked, falling back to SoundCloud via yt-dlp: ${err.message}`);
-        // Krok 3: SoundCloud fallback přes yt-dlp
+        log.warn('resolver', `yt-dlp blocked, falling back to SoundCloud via play-dl: ${err.message}`);
+        // Krok 3: SoundCloud fallback přes play-dl (plné celé skladby)
         return resolveYouTubeUrlViaSoundCloudFallback(normalizedUrl, requestedBy);
     }
 }
@@ -238,31 +270,31 @@ async function resolve(input, requestedBy) {
         return resolveUrlViaYtDlp(trimmed, requestedBy);
     }
 
-    log.info('resolver', 'Searching via yt-dlp (SoundCloud/YouTube):', trimmed);
+    log.info('resolver', 'Searching via play-dl (SoundCloud):', trimmed);
 
     try {
-        const output = runYtDlp(`scsearch1:${trimmed}`, '-j --no-playlist');
-        const data = JSON.parse(output.trim().split('\n')[0]);
-        const trackUrl = data.webpage_url || data.original_url;
-        if (data && trackUrl) {
-            const track = {
-                title: data.title || 'Unknown Title',
-                url: trackUrl,
+        const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
+            .catch(() => []);
+        if (scResults.length && scResults[0].url) {
+            const found = scResults[0];
+            const track = normalizeSearchTrack(found, requestedBy);
+            log.info('resolver', 'Selected SoundCloud search result:', track.title);
+            return [await enrichTrackMetadata({
+                title: track.title,
+                url: found.url,
                 streamUrl: null,
-                author: data.uploader || data.channel || 'Unknown Artist',
-                duration: data.duration || 0,
-                thumbnail: data.thumbnail || null,
+                author: track.author,
+                duration: track.duration,
+                thumbnail: track.thumbnail,
                 requestedBy: requestedBy || null,
                 lyrics: null,
                 album: null,
                 source: 'soundcloud'
-            };
-            log.info('resolver', 'Selected SoundCloud search result:', track.title);
-            return [await enrichTrackMetadata(track)];
+            })];
         }
     } catch {}
 
-    // Fallback na ytsearch
+    // Fallback na ytsearch pokud SoundCloud nic nenajde
     try {
         const output = runYtDlp(`ytsearch1:${trimmed}`, '-j --no-playlist');
         const data = JSON.parse(output.trim().split('\n')[0]);
