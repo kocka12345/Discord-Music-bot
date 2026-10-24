@@ -87,7 +87,8 @@ function getCookieArg() {
 function runYtDlp(target, options = '') {
     try {
         const cookieArg = getCookieArg();
-        const cmd = `yt-dlp ${cookieArg} ${options} "${target}"`;
+        // Vynucení UTF-8 prostředí pro Python / yt-dlp v kontejneru
+        const cmd = `LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp ${cookieArg} ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
