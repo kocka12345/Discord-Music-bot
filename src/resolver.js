@@ -141,7 +141,7 @@ function cleanQuery(title) {
         .trim();
 }
 
-// Robustní SoundCloud záloha přes yt-dlp (vrací přímý funkční stream odkaz)
+// SoundCloud záloha přes yt-dlp – vrací správný webový odkaz na SoundCloud skladbu
 async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     const meta = await fetchYouTubeBasicMeta(url);
     const query = cleanQuery(meta?.title) || meta?.title;
@@ -154,21 +154,22 @@ async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
         const output = runYtDlp(`scsearch1:${query}`, '-j --no-playlist');
         const data = JSON.parse(output.trim().split('\n')[0]);
         
-        if (!data.url) {
-            throw new Error('SoundCloud search returned no stream URL.');
+        const trackUrl = data.webpage_url || data.original_url;
+        if (!trackUrl) {
+            throw new Error('SoundCloud search returned no webpage URL.');
         }
 
         return [{
             title: meta?.title || data.title || 'Unknown Title',
-            url: url,
-            streamUrl: data.url,
+            url: trackUrl,
+            streamUrl: null, // Necháme bota, ať si to vyřeší standardním streamovacím resolverem pro SoundCloud
             author: data.uploader || data.channel || meta?.author || 'Unknown Artist',
             duration: data.duration || 0,
             thumbnail: data.thumbnail || meta?.thumbnail || null,
             requestedBy: requestedBy || null,
             lyrics: null,
             album: null,
-            source: 'soundcloud-from-youtube',
+            source: 'soundcloud',
         }];
     } catch (err) {
         throw new Error('Could not resolve URL via Piped/yt-dlp and SoundCloud fallback failed: ' + err.message);
@@ -239,15 +240,15 @@ async function resolve(input, requestedBy) {
 
     log.info('resolver', 'Searching via yt-dlp (SoundCloud/YouTube):', trimmed);
 
-    // Přímé hledání přes yt-dlp (zkusíme SoundCloud a pak YouTube)
     try {
         const output = runYtDlp(`scsearch1:${trimmed}`, '-j --no-playlist');
         const data = JSON.parse(output.trim().split('\n')[0]);
-        if (data && data.url) {
+        const trackUrl = data.webpage_url || data.original_url;
+        if (data && trackUrl) {
             const track = {
                 title: data.title || 'Unknown Title',
-                url: data.webpage_url || data.original_url || `https://soundcloud.com`,
-                streamUrl: data.url,
+                url: trackUrl,
+                streamUrl: null,
                 author: data.uploader || data.channel || 'Unknown Artist',
                 duration: data.duration || 0,
                 thumbnail: data.thumbnail || null,
