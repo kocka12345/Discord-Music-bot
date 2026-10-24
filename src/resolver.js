@@ -1,4 +1,6 @@
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const playdl = require('play-dl');
 const log = require('./logger');
 const { enrichTrackMetadata } = require('./trackMetadata');
@@ -68,9 +70,24 @@ function parseYouTubeListId(url) {
     }
 }
 
+function getCookieArg() {
+    if (!process.env.PLAYDL_YOUTUBE_COOKIE_B64) return '';
+    try {
+        const cookieFilePath = path.join('/tmp', 'yt_cookies.txt');
+        if (!fs.existsSync(cookieFilePath)) {
+            const cookieText = Buffer.from(process.env.PLAYDL_YOUTUBE_COOKIE_B64, 'base64').toString('utf8');
+            fs.writeFileSync(cookieFilePath, cookieText, 'utf8');
+        }
+        return `--cookies "${cookieFilePath}"`;
+    } catch (err) {
+        return '';
+    }
+}
+
 function runYtDlp(target, options = '') {
     try {
-        const cmd = `yt-dlp ${options} "${target}"`;
+        const cookieArg = getCookieArg();
+        const cmd = `yt-dlp ${cookieArg} ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
