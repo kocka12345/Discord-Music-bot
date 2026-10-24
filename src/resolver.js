@@ -88,8 +88,8 @@ function getCookieArg() {
 function runYtDlp(target, options = '') {
     try {
         const cookieArg = getCookieArg();
-        // Přidání player_client argumentů pro obcházení SABR formátů a n-challenge přes Node.js
-        const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --js-runtimes node --extractor-args "youtube:player_client=tv_downgraded,web,android_vr" ${cookieArg} ${options} "${target}"`;
+        // Použití ověřených klientů web a ios, které podporují cookies a obcházejí SABR
+        const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --extractor-args "youtube:player_client=web,ios" ${cookieArg} ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
