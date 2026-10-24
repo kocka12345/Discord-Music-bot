@@ -86,7 +86,6 @@ function parseYouTubeListId(url) {
     }
 }
 
-// Metoda 1: Piped API (Obchází blokaci Oracle Cloud IP přes externí servery)
 async function resolveUrlViaPipedApi(url, requestedBy) {
     const videoId = extractYouTubeId(url);
     if (!videoId) return null;
@@ -176,28 +175,37 @@ async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
         throw new Error('Could not read YouTube title for fallback lookup.');
     }
 
+    // Vyhledáme více výsledků (až 5), abychom vybrali funkční
     const scResults = await playdl.search(query, {
         source: { soundcloud: 'tracks' },
-        limit: 1,
+        limit: 5,
     }).catch(() => []);
 
     if (!scResults.length) {
         throw new Error('Could not resolve URL via Piped/yt-dlp and no SoundCloud match found.');
     }
 
-    const sc = normalizeSearchTrack(scResults[0], requestedBy);
-    return [{
-        title: meta?.title || sc.title || 'Unknown Title',
-        url: url,
-        streamUrl: sc.url,
-        author: sc.author || meta?.author || 'Unknown Artist',
-        duration: sc.duration || 0,
-        thumbnail: sc.thumbnail || meta?.thumbnail || null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-        album: null,
-        source: 'soundcloud-from-youtube',
-    }];
+    // Vezmeme první výsledek, který má platnou URL
+    for (const rawResult of scResults) {
+        const sc = normalizeSearchTrack(rawResult, requestedBy);
+        if (sc && sc.url) {
+            log.info('resolver', `Selected working SoundCloud fallback: ${sc.url}`);
+            return [{
+                title: meta?.title || sc.title || 'Unknown Title',
+                url: url,
+                streamUrl: sc.url,
+                author: sc.author || meta?.author || 'Unknown Artist',
+                duration: sc.duration || 0,
+                thumbnail: sc.thumbnail || meta?.thumbnail || null,
+                requestedBy: requestedBy || null,
+                lyrics: null,
+                album: null,
+                source: 'soundcloud-from-youtube',
+            }];
+        }
+    }
+
+    throw new Error('Found SoundCloud matches, but none had valid stream URLs.');
 }
 
 async function resolveUrlViaYtDlp(url, requestedBy) {
@@ -224,11 +232,11 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
         }));
     }
 
-    // Krok 1: Pokus přes Piped API (obchází Oracle Cloud blokaci)
+    // Krok 1: Piped API
     const pipedResult = await resolveUrlViaPipedApi(normalizedUrl, requestedBy);
     if (pipedResult) return pipedResult;
 
-    // Krok 2: Přímý pokus přes yt-dlp
+    // Krok 2: yt-dlp
     try {
         log.info('resolver', 'Piped API unavailable, trying direct yt-dlp...');
         const output = runYtDlp(normalizedUrl, '-j --no-playlist');
@@ -248,7 +256,7 @@ async function resolveUrlViaYtDlp(url, requestedBy) {
         return [await enrichTrackMetadata(single)];
     } catch (err) {
         log.warn('resolver', `yt-dlp blocked, falling back to SoundCloud: ${err.message}`);
-        // Krok 3: SoundCloud fallback
+        // Krok 3: Robustní SoundCloud fallback
         return resolveYouTubeUrlViaSoundCloudFallback(normalizedUrl, requestedBy);
     }
 }
@@ -264,12 +272,16 @@ async function resolve(input, requestedBy) {
 
     log.info('resolver', 'Searching via SoundCloud / yt-dlp:', trimmed);
 
-    const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 1 })
+    const scResults = await playdl.search(trimmed, { source: { soundcloud: 'tracks' }, limit: 5 })
         .catch(() => []);
     if (scResults.length) {
-        const found = scResults[0];
-        log.info('resolver', 'Selected SoundCloud result:', found.url);
-        return [await enrichTrackMetadata(normalizeSearchTrack(found, requestedBy))];
+        for (const rawResult of scResults) {
+            const found = normalizeSearchTrack(rawResult, requestedBy);
+            if (found && found.url) {
+                log.info('resolver', 'Selected working SoundCloud result:', found.url);
+                return [await enrichTrackMetadata(found)];
+            }
+        }
     }
 
     // Fallback to yt-dlp search
