@@ -75,7 +75,9 @@ function getCookieArg() {
     try {
         const cookieFilePath = path.join('/tmp', 'yt_cookies.txt');
         if (!fs.existsSync(cookieFilePath)) {
-            const cookieText = Buffer.from(process.env.PLAYDL_YOUTUBE_COOKIE_B64, 'base64').toString('utf8');
+            let cookieText = Buffer.from(process.env.PLAYDL_YOUTUBE_COOKIE_B64.trim(), 'base64').toString('utf8');
+            // Vyčištění neplatných znaků, které způsobují pád kódování
+            cookieText = cookieText.replace(/\ufffd/g, '');
             fs.writeFileSync(cookieFilePath, cookieText, 'utf8');
         }
         return `--cookies "${cookieFilePath}"`;
@@ -87,8 +89,8 @@ function getCookieArg() {
 function runYtDlp(target, options = '') {
     try {
         const cookieArg = getCookieArg();
-        // Vynucení UTF-8 prostředí pro Python / yt-dlp v kontejneru
-        const cmd = `LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp ${cookieArg} ${options} "${target}"`;
+        // Vynucení UTF-8 pro Python i systém v kontejneru
+        const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp ${cookieArg} ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
