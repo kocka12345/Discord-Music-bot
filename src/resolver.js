@@ -70,55 +70,12 @@ function parseYouTubeListId(url) {
 
 function runYtDlp(target, options = '') {
     try {
-        // Použití ios,web klientů bez cookies – obchází bot check bez nutnosti přihlášení
         const cmd = `PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 LANG=C.UTF-8 yt-dlp --extractor-args "youtube:player_client=ios,web" ${options} "${target}"`;
         const stdout = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
         return stdout;
     } catch (err) {
         throw new Error(err.message || 'yt-dlp execution failed');
     }
-}
-
-async function resolveUrlViaYtDlp(url, requestedBy) {
-    const normalizedUrl = normalizeYouTubeUrl(url);
-    const listId = parseYouTubeListId(normalizedUrl);
-
-    if (listId) {
-        log.info('resolver', 'Playlist detected, resolving via yt-dlp...');
-        const output = runYtDlp(`https://www.youtube.com/playlist?list=${listId}`, '-j --flat-playlist');
-        const lines = output.trim().split('\n').filter(Boolean);
-        const videos = lines.map(line => {
-            try { return JSON.parse(line); } catch { return null; }
-        }).filter(Boolean);
-
-        if (!videos.length) throw new Error('Playlist is empty or unavailable.');
-        return videos.map(v => ({
-            title: v.title || 'Unknown',
-            url: v.url || (v.id ? `https://www.youtube.com/watch?v=${v.id}` : null),
-            author: v.uploader || v.channel || 'Unknown',
-            duration: v.duration || 0,
-            thumbnail: v.thumbnail || v.thumbnails?.[0]?.url || null,
-            requestedBy: requestedBy || null,
-            lyrics: null,
-        }));
-    }
-
-    log.info('resolver', 'Resolving single video via yt-dlp...');
-    const output = runYtDlp(normalizedUrl, '-j --no-playlist');
-    const data = JSON.parse(output.trim().split('\n')[0]);
-    const single = {
-        title: data.title || 'Unknown Title',
-        url: data.webpage_url || data.original_url || normalizedUrl,
-        streamUrl: data.url || null,
-        author: data.uploader || data.channel || 'Unknown Artist',
-        duration: data.duration || 0,
-        thumbnail: data.thumbnail || null,
-        requestedBy: requestedBy || null,
-        lyrics: null,
-        album: null,
-        source: 'youtube'
-    };
-    return [await enrichTrackMetadata(single)];
 }
 
 async function fetchYouTubeBasicMeta(url) {
@@ -172,18 +129,89 @@ async function resolveYouTubeUrlViaSoundCloudFallback(url, requestedBy) {
     }];
 }
 
+async function resolveUrlViaYtDlp(url, requestedBy) {
+    const normalizedUrl = normalizeYouTubeUrl(url);
+    const listId = parseYouTubeListId(normalizedUrl);
+
+    if (listId) {
+        log.info('resolver', 'Playlist detected, resolving via yt-dlp...');
+        const output = runYtDlp(`https://www.youtube.com/playlist?list=${listId}`, '-j --flat-playlist');
+        const lines = output.trim().split('\n').filter(Boolean);
+        const videos = lines.map(line => {
+            try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean);
+
+        if (!videos.length) throw new Error('Playlist is empty or unavailable.');
+        return videos.map(v => ({
+            title: v.title || 'Unknown',
+            url: v.url || (v.id ? `https://www.youtube.com/watch?v=${v.id}` : null),
+            author: v.uploader || v.channel || 'Unknown',
+            duration: v.duration || 0,
+            thumbnail: v.thumbnail || v.thumbnails?.[0]?.url || null,
+            requestedBy: requestedBy || null,
+            lyrics: null,
+        }));
+    }
+
+    // Pokus 1: Přímé stažení URL
+    try {
+        log.info('resolver', 'Resolving single video via yt-dlp...');
+        const output = runYtDlp(normalizedUrl, '-j --no-playlist');
+        const data = JSON.parse(output.trim().split('\n')[0]);
+        const single = {
+            title: data.title || 'Unknown Title',
+            url: data.webpage_url || data.original_url || normalizedUrl,
+            streamUrl: data.url || null,
+            author: data.uploader || data.channel || 'Unknown Artist',
+            duration: data.duration || 0,
+            thumbnail: data.thumbnail || null,
+            requestedBy: requestedBy || null,
+            lyrics: null,
+            album: null,
+            source: 'youtube'
+        };
+        return [await enrichTrackMetadata(single)];
+    } catch (err) {
+        log.warn('resolver', `Direct yt-dlp failed, using oembed + search fallback: ${err.message}`);
+        
+        // Pokus 2: Získání metadat přes OEmbed a vyhledání přes ytsearch1
+        const meta = await fetchYouTubeBasicMeta(normalizedUrl);
+        const query = [meta?.title, meta?.author].filter(Boolean).join(' ').trim();
+        
+        if (query) {
+            try {
+                const searchOutput = runYtDlp(`ytsearch1:${query}`, '-j --no-playlist');
+                const data = JSON.parse(searchOutput.trim().split('\n')[0]);
+                const single = {
+                    title: data.title || meta?.title || 'Unknown Title',
+                    url: normalizedUrl,
+                    streamUrl: data.url || null,
+                    author: data.uploader || data.channel || meta?.author || 'Unknown Artist',
+                    duration: data.duration || 0,
+                    thumbnail: data.thumbnail || meta?.thumbnail || null,
+                    requestedBy: requestedBy || null,
+                    lyrics: null,
+                    album: null,
+                    source: 'youtube'
+                };
+                return [await enrichTrackMetadata(single)];
+            } catch (searchErr) {
+                // Pokus 3: SoundCloud fallback
+                return resolveYouTubeUrlViaSoundCloudFallback(normalizedUrl, requestedBy);
+            }
+        }
+        
+        throw err;
+    }
+}
+
 async function resolve(input, requestedBy) {
     const trimmed = input.trim();
     const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
 
     if (isUrl) {
         log.info('resolver', 'URL detected, resolving via yt-dlp...');
-        try {
-            return await resolveUrlViaYtDlp(trimmed, requestedBy);
-        } catch (err) {
-            log.warn('resolver', `yt-dlp failed, falling back to SoundCloud: ${err.message}`);
-            return resolveYouTubeUrlViaSoundCloudFallback(trimmed, requestedBy);
-        }
+        return resolveUrlViaYtDlp(trimmed, requestedBy);
     }
 
     log.info('resolver', 'Searching via SoundCloud / yt-dlp:', trimmed);
